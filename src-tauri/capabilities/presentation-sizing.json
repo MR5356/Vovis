@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "presentation-sizing",
+  "description": "Allow the audience window to fit the displayed slide.",
+  "windows": ["presentation"],
+  "permissions": ["core:window:allow-set-size", "core:window:allow-set-position"]
+}

@@ -1,0 +1,68 @@
+# Dependencies and build output
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.tsbuildinfo
+coverage/
+.vite/
+
+# Published development packages
+/Vovis-macOS-*-dev.zip
+*.dmg
+*.msi
+*.AppImage
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs and editor / OS files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local assistant and design work
+AGENTS.md
+CLAUDE.md
+.codex/
+.claude/
+.cursor/
+.github/copilot-instructions.md
+/docs/internal/
+/docs/architecture.md
+/docs/product.md
+/docs/ux-ui.md
+/docs/implementation-status.md
+/docs/*.png
+
+# Private deployment and locally exported packages
+/scripts/publish-download.sh
+*.app/
+*.zip
+
+# Local workspace, imported presentations, recordings and exports
+*.sqlite3
+*.sqlite3-*
+*.vovis.json
+*.pdf
+*.m4a
+*.mp3
+*.wav
+*.flac
+*.ogg
+*.webm
+*.mp4
+*.mov
