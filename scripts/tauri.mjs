@@ -13,7 +13,13 @@ const candidates = [
   join(homedir(), '.cargo', 'bin'),
 ].filter(Boolean);
 const rustupBin = candidates.find((directory) => existsSync(join(directory, executable)));
-if (rustupBin) env.PATH = `${rustupBin}${delimiter}${env.PATH ?? ''}`;
+if (rustupBin) {
+  // Windows often supplies "Path". Adding a second "PATH" can hide Node and npm.
+  const pathKey = process.platform === 'win32'
+    ? Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'Path'
+    : 'PATH';
+  env[pathKey] = [rustupBin, env[pathKey]].filter(Boolean).join(delimiter);
+}
 const cargo = spawnSync('cargo', ['--version'], { env, encoding: 'utf8' });
 if (cargo.error || cargo.status !== 0) {
   console.error('Rust toolchain unavailable. Install stable Rust with rustup before starting Tauri.');
