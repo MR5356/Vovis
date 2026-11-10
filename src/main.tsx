@@ -1,3 +1,4 @@
+import { AppUpdateProvider, UpdateNotice } from "./components/AppUpdate";
 import { SessionUsage, type ModelUsage } from "./domain/sessionUsage";
 import { ModelUsageSummary } from "./components/ModelUsageSummary";
 import { PageLayout } from "./components/PageLayout";
@@ -1140,6 +1141,7 @@ function App({
         </nav>
         <div className="sidebar-drag-space" data-tauri-drag-region />
         <div className="side-bottom" data-tauri-drag-region>
+          <UpdateNotice />
           <Button
             variant="ghost"
             className="nav"
@@ -2665,7 +2667,9 @@ async function bootstrap() {
         <ErrorBoundary>
           <Toaster theme="light" position="bottom-center" />
           <DesktopChrome />
-          <Manager Workspace={App} defaults={defaults} storage={storage} />
+          <AppUpdateProvider>
+            <Manager Workspace={App} defaults={defaults} storage={storage} />
+          </AppUpdateProvider>
         </ErrorBoundary>
       </>,
     );

@@ -1,6 +1,6 @@
 [package]
 name = "vovis"
-version = "0.2.0"
+version = "1.0.0"
 description = "Vovis presentation workspace"
 authors = ["Vovis"]
 license = "MIT"

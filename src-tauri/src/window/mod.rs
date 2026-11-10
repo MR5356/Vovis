@@ -1,5 +1,3 @@
-#[cfg(target_os = "macos")]
-use tauri::LogicalPosition;
 #[cfg(target_os = "windows")]
 mod windows;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -15,7 +13,7 @@ pub fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .inner_size(1440.0, 940.0)
         .min_inner_size(1000.0, 680.0)
         .center()
-        .transparent(true)
+        .transparent(!cfg!(target_os = "macos"))
         .shadow(true)
         .visible(false);
     let window = platform_controls(builder)?.build()?;
@@ -40,10 +38,8 @@ fn platform_controls(
     let builder = builder
         .decorations(true)
         .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
-        // Tao applies the vertical inset to the title bar container.
-        // Allow for the native button frame inside it to align the visible margins.
-        .traffic_light_position(LogicalPosition::new(22.0, 27.0));
+        // Let AppKit lay out the standard buttons when the window changes screens.
+        .hidden_title(true);
     #[cfg(not(target_os = "macos"))]
     let builder = builder.decorations(true);
     Ok(builder)

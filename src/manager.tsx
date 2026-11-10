@@ -21,8 +21,8 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import { AppUpdate } from "./components/AppUpdate";
-import { isDesktop, type WorkspaceStore } from "./infrastructure/desktop";
+import { UpdateNotice } from "./components/AppUpdate";
+import type { WorkspaceStore } from "./infrastructure/desktop";
 import { useState, useEffect, useRef } from "react";
 import {
   Presentation,
@@ -380,7 +380,7 @@ export function Manager({
         </nav>
         <div className="sidebar-drag-space" data-tauri-drag-region />
         <div className="side-bottom" data-tauri-drag-region>
-          {isDesktop && <AppUpdate showCheck={screen === "settings"} />}
+          <UpdateNotice />
           <Button
             variant="ghost"
             className={screen === "settings" ? "nav active" : "nav"}

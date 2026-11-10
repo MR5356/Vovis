@@ -37,11 +37,11 @@ The native renderer hydrates SQLite before mounting. Invalid saved data produces
 
 ## GitHub releases and updates
 
-Push a stable version tag to build the desktop release. The tag sets the bundled application version, so pushing `v0.2.1` produces version `0.2.1` even if the development version is older.
+Push a stable version tag to build the desktop release. The tag sets the bundled application version, so pushing `v1.0.0` produces version `1.0.0` even if the development version is older.
 
 ```sh
-git tag v0.2.1
-git push origin v0.2.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 The release includes macOS DMGs for Apple silicon and Intel, Windows NSIS installers for x64 and ARM64, and Linux AppImages for x64 and ARM64. The workflow verifies every update package with the public key embedded in Vovis before publishing the installers and `latest.json` together.

@@ -1,3 +1,4 @@
+import { UpdateSettings } from "./components/AppUpdate";
 import { useFeishuLogin } from "@/hooks/useFeishuLogin";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -969,6 +970,7 @@ export function GlobalSettings({
           </aside>
         </div>
       </Card>
+      <UpdateSettings />
     </>
   );
 }

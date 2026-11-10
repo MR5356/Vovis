@@ -2844,6 +2844,16 @@ input:disabled {
     margin-top: 15px;
   }
 }
+.update-settings {
+  margin-top: 20px;
+  padding: 18px 30px;
+}
+.update-settings .card-heading {
+  margin-bottom: 0;
+}
+.update-settings .muted {
+  margin: 6px 0 0 30px;
+}
 .feishu-config {
   padding: 27px 30px;
   margin-top: 34px;
@@ -2926,6 +2936,7 @@ input:disabled {
   .feishu-actions {
     flex-wrap: wrap;
   }
+  .update-settings,
   .feishu-config {
     padding: 22px;
   }
@@ -3157,6 +3168,8 @@ html[data-platform="macos"] .sidebar {
   padding-top: 52px;
 }
 html[data-platform="macos"] .desktop-dragbar {
+  top: 0;
+  left: 0;
   right: auto;
   width: 180px;
 }
@@ -3537,6 +3550,13 @@ html[data-platform="macos"] .desktop-dragbar {
 html[data-runtime="desktop"] .replay-shell {
   height: calc(100dvh - 16px);
   min-height: 0;
+}
+/* Align the content with the native frame that owns the macOS window controls. */
+html[data-platform="macos"] :is(.app-shell, .replay-shell) {
+  margin: 0;
+  height: 100dvh;
+  max-width: none;
+  border-radius: 0;
 }
 
 /* Keep navigation and controls from selecting text on repeated clicks. */
