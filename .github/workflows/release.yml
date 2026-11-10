@@ -74,6 +74,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: npm run desktop:build -- --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config release.conf.json
+      - name: Verify macOS app bundle signature
+        if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict --verbose=2 "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Vovis.app"
       - run: python scripts/release-assets.py stage ${{ matrix.platform }} src-tauri/target/${{ matrix.target }}/release/bundle
       - uses: actions/upload-artifact@v4
         with:
@@ -102,13 +105,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          PREVIOUS_REF: ${{ github.event.before }}
         run: |
           set -euo pipefail
+          current=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
+          [[ "$current" == "$(git rev-parse HEAD)" ]] || { echo "::error::Release tag has moved"; exit 1; }
           if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft); then
-            [[ "$draft" == true ]] || { echo "::error::This release is already public"; exit 1; }
+            if [[ "$draft" == false ]]; then
+              [[ "$PREVIOUS_REF" =~ ^[0-9a-f]{40}$ && ! "$PREVIOUS_REF" =~ ^0+$ ]] || { echo "::error::Republishing requires updating the existing tag"; exit 1; }
+            fi
           else
             gh release create "$TAG" --verify-tag --draft --generate-notes --title "Vovis ${TAG#v}"
           fi
-          gh release upload "$TAG" release-assets/* --clobber
+          gh release upload "$TAG" release-assets/Vovis-* --clobber
+          gh release upload "$TAG" release-assets/latest.json --clobber
+          if [[ "${draft:-}" == false ]]; then
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            git for-each-ref --format='%(contents:body)' "refs/tags/$TAG" > "$RUNNER_TEMP/rebuild-note"
+            gh release view "$TAG" --json body --jq .body > "$RUNNER_TEMP/previous-notes"
+            if grep -q '[^[:space:]]' "$RUNNER_TEMP/rebuild-note" && ! grep -Fqx -- "$(head -1 "$RUNNER_TEMP/rebuild-note")" "$RUNNER_TEMP/previous-notes"; then
+              cat "$RUNNER_TEMP/rebuild-note" "$RUNNER_TEMP/previous-notes" > "$RUNNER_TEMP/release-notes"
+              gh release edit "$TAG" --notes-file "$RUNNER_TEMP/release-notes"
+            fi
+            exit 0
+          fi
           id=$(gh release view "$TAG" --json databaseId --jq .databaseId)
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false -f make_latest=legacy --silent
