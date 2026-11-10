@@ -35,6 +35,21 @@ npm run desktop:build
 
 The native renderer hydrates SQLite before mounting. Invalid saved data produces an error screen instead of overwriting it. PDF resources use immutable IDs so later imports do not replace historical assets. Credentials are separate from project data and exports. Browser preview does not accept real credentials.
 
+## GitHub releases and updates
+
+Push a stable version tag to build the desktop release. The tag sets the bundled application version, so pushing `v0.2.1` produces version `0.2.1` even if the development version is older.
+
+```sh
+git tag v0.2.1
+git push origin v0.2.1
+```
+
+The release includes macOS DMGs for Apple silicon and Intel, Windows NSIS installers for x64 and ARM64, and Linux AppImages for x64 and ARM64. The workflow verifies every update package with the public key embedded in Vovis before publishing the installers and `latest.json` together.
+
+Before the first tag, add the matching private key as the repository Actions secret `TAURI_SIGNING_PRIVATE_KEY`. If the key is encrypted, also set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep a private backup of this key for future updates. For an independent fork, generate a separate key with `npm run tauri -- signer generate -w <private-key-path>`, set the public key and release endpoint in `src-tauri/tauri.conf.json`, and configure the fork's own secrets.
+
+The desktop project list checks for updates at startup. An available version can be downloaded, verified and installed from the sidebar. Settings also provides a manual check. For Linux in-app updates, run the downloaded AppImage from a writable location.
+
 ## License
 
 Vovis is distributed under the [MIT License](LICENSE). UI components adapted from shadcn/ui carry the [upstream MIT notice](licenses/shadcn-ui.txt).

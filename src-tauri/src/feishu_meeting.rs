@@ -460,11 +460,11 @@ pub(crate) async fn feishu_meeting_events(
     since: u64,
     until: u64,
     request_id: String,
-    reads: State<'_, FeishuReads>,
 ) -> AppResult<MeetingBatch> {
     crate::commands::main_only(&window)?;
     let id = uuid::Uuid::parse_str(&request_id).map_err(|_| error("飞书读取请求 ID 无效"))?;
-    reads
+    window
+        .state::<FeishuReads>()
         .run(id, async {
             let token = access(&window, &user, &app_id).await?;
             meeting_events(&token, meeting_id, since, until).await
@@ -531,11 +531,11 @@ pub(crate) async fn read_feishu_chat(
     since: u64,
     until: u64,
     request_id: String,
-    reads: State<'_, FeishuReads>,
 ) -> AppResult<Vec<crate::providers::FeishuChatMessage>> {
     crate::commands::main_only(&window)?;
     let id = uuid::Uuid::parse_str(&request_id).map_err(|_| error("飞书读取请求 ID 无效"))?;
-    reads
+    window
+        .state::<FeishuReads>()
         .run(id, async {
             let token = access(&window, &user, &app_id).await?;
             crate::providers::feishu_chat_messages(&token, &group_id, since, until).await

@@ -166,7 +166,6 @@ pub(crate) enum SpeechEvent {
 #[tauri::command]
 pub(crate) fn start_speech(
     window: WebviewWindow,
-    app: AppHandle,
     connection_id: String,
     request_id: String,
     verify_script: Option<bool>,
@@ -175,6 +174,7 @@ pub(crate) fn start_speech(
     events: tauri::ipc::Channel<SpeechEvent>,
 ) -> AppResult<()> {
     main_only(&window)?;
+    let app = window.app_handle().clone();
     let id = parse_job_id(&request_id)?;
     let (cancel, cancelled) = tokio::sync::oneshot::channel();
     {

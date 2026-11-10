@@ -32,5 +32,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/MR5356/Vovis/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwRjZGRTFDOTZEODA5MjAKUldRZ0NkaVdIUDcya0JRaGRtRXExU0VZVnJOc2tmbVExQ2tzeld1dG1MY1doWjI0YlNac3MxSGEK",
+      "requireSignedVersion": true
+    }
   }
 }

@@ -66,3 +66,8 @@ CLAUDE.md
 *.webm
 *.mp4
 *.mov
+
+# Temporary inputs and staged assets for tag builds
+/release.conf.json
+/release-assets/
+__pycache__/
