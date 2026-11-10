@@ -1,7 +1,5 @@
 # Vovis
 
-<iframe src="//player.bilibili.com/player.html?isOutside=true&aid=117593168087852&bvid=BV15zWV6tE6D&cid=43496833573&p=1" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true" title="Vovis 介绍视频"></iframe>
-
 [![播放 Vovis 介绍视频](https://i0.hdslb.com/bfs/archive/988789930f67fd0c28b020792275e03b7e2f3fea.jpg)](https://www.bilibili.com/video/BV15zWV6tE6D/)
 
 [在哔哩哔哩观看《我做了个会讲 PPT 的 AI，然后让它上台介绍自己》](https://www.bilibili.com/video/BV15zWV6tE6D/)
