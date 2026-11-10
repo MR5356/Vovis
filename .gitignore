@@ -54,6 +54,7 @@ CLAUDE.md
 *.zip
 
 # Local workspace, imported presentations, recordings and exports
+/output/
 *.sqlite3
 *.sqlite3-*
 *.vovis.json
