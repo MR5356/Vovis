@@ -1,6 +1,6 @@
 # Vovis
 
-[![播放 Vovis 介绍视频](https://i0.hdslb.com/bfs/archive/988789930f67fd0c28b020792275e03b7e2f3fea.jpg)](https://www.bilibili.com/video/BV15zWV6tE6D/)
+https://github.com/user-attachments/assets/9f7487df-2bc6-4f20-a4e6-a654a851a8af
 
 [在哔哩哔哩观看《我做了个会讲 PPT 的 AI，然后让它上台介绍自己》](https://www.bilibili.com/video/BV15zWV6tE6D/)
 
