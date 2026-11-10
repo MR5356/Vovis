@@ -1,55 +1,57 @@
 # Vovis
 
-Vovis is a desktop app for presenting PDF slides with AI narration. Prepare speaker notes, rehearse, and present in a separate audience window. During a talk, Vovis can review Feishu meeting questions, answer them using the presentation material, and resume at the interrupted sentence. Session records support replay and video export.
+<iframe src="//player.bilibili.com/player.html?isOutside=true&aid=117593168087852&bvid=BV15zWV6tE6D&cid=43496833573&p=1" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true" title="Vovis 介绍视频"></iframe>
 
-## Development
+[![播放 Vovis 介绍视频](https://i0.hdslb.com/bfs/archive/988789930f67fd0c28b020792275e03b7e2f3fea.jpg)](https://www.bilibili.com/video/BV15zWV6tE6D/)
 
-Prerequisites: Node.js 22+, current stable Rust, and the platform prerequisites from [Tauri](https://v2.tauri.app/start/prerequisites/).
+[在哔哩哔哩观看《我做了个会讲 PPT 的 AI，然后让它上台介绍自己》](https://www.bilibili.com/video/BV15zWV6tE6D/)
+
+Vovis 是一款能替你讲解 PDF 幻灯片的桌面应用。你可以逐页准备和试听讲稿，把演示窗口投到大屏，让 AI 按稿主讲。观众提问时，Vovis 可以结合演讲资料作答，再从刚才被打断的句子继续讲解。
+
+## 安装
+
+在 [GitHub Releases](https://github.com/MR5356/Vovis/releases) 的 **Assets** 中，按系统和芯片选择安装包。如果页面还没有安装包，可以按文末的「从源码运行」启动桌面版。
+
+| 系统 | 选择哪个文件 | 如何安装 |
+| --- | --- | --- |
+| macOS | M 系列芯片选 `darwin-aarch64.dmg`，Intel 芯片选 `darwin-x86_64.dmg` 结尾的文件 | 打开 DMG，把 Vovis 拖入「应用程序」 |
+| Windows | Intel / AMD 电脑选 `windows-x86_64-setup.exe`，ARM 电脑选 `windows-aarch64-setup.exe` 结尾的文件 | 双击安装程序，按提示安装 |
+| Linux | Intel / AMD 电脑选 `linux-x86_64.AppImage`，ARM64 电脑选 `linux-aarch64.AppImage` 结尾的文件 | 将文件放在可写目录，赋予执行权限后运行 |
+
+## 完成第一场演讲
+
+1. **连接模型。** 打开侧栏「模型服务」→「添加连接」，按服务商提供的信息填写接口协议、基础地址、模型 ID 和 API Key。在「全局默认用途」中，将语言模型分配给「讲稿生成」和「现场问答」，将语音合成模型分配给「语音合成」。语音合成还需要填写该服务支持的音色 ID，点击「测试并试听」确认能听到声音。手动编写讲稿、只做语音主讲时，配置语音合成即可。
+2. **导入幻灯片。** 在「演讲项目」点击「新建演讲」，选择或拖入 PDF。如果手里是 PPT，先从 PowerPoint 或 Keynote 导出为 PDF。导入后可以修改自动识别的演讲名称，再点击「创建演讲项目」。以后需要换稿，可在同一项目中点击「替换 PDF」。
+3. **准备讲稿。** 在「准备工作台」点击缩略图，编辑右侧的「逐页讲稿」，也可以用「生成本页」或「生成全部」起草。用「试听讲稿」检查读音和停顿。需要让 AI 参考产品说明、术语或答辩材料时，把内容添加到「演讲资料」。多场共用的内容可以放入「全局资料库」，再在项目中引用。
+4. **彩排并投屏。** 点击「打开观众演示窗口」，把它移到投影屏，或在会议软件中共享这个窗口。进入「彩排检查」，确认每页都有讲稿、主讲音色正确，并实际试听。线上演讲还要在会议软件中设置声音共享，确认参会者能听见后，勾选音频确认项，再点击「彩排检查」。
+5. **开始主讲。** 彩排通过后，点击「开始主讲」，Vovis 会从第一页开始播报。你可以在主讲控制台暂停讲解或人工接管，在右侧「观众问题」查看提问，也可以手动输入问题并加入队列。
+
+## 接收飞书会议提问
+
+线下演讲可以直接跳过飞书配置。要让 Vovis 读取线上会议的提问，请先打开「设置」→「飞书应用」，按页面指引在飞书开放平台创建企业自建应用、开通用户权限、登记回调地址并发布。将 App ID 和 App Secret 填回 Vovis，点击「保存并检查」。
+
+用参会账号加入会议后，在项目的彩排页完成个人授权，选择已加入的会议，点击「检查所选会议」。如需同时接收关联群的提问，开通读取群消息的用户权限，并填写以 `oc_` 开头的群 ID。
+
+主讲期间，Vovis 会评审收到的消息，将识别出的观众问题加入待答队列并生成答案。答案可信度达到 **90 分**时可自动播报；其余问题可点「查看答案」，再决定「回答」或跳过。
+
+## 回放、导出与更新
+
+- **回看或分享演讲。** 结束演讲后打开「演讲记录」，点击「查看回放」可按时间回看幻灯片和问答。点击「导出视频」会把 MP4 保存到系统的「下载」目录。视频使用当场保存的幻灯片和主播音轨；没有音轨的记录导出为无声视频。
+- **查看版本。** 在「设置」底部的「应用更新」可以看到当前版本，也可以手动检查更新。启动时发现新版，侧栏「设置」上方会出现「发现新版本」，点击后即可查看并安装。
+
+## 从源码运行
+
+先安装 Git、Node.js 22 或更高版本、稳定版 Rust，以及对应系统的 [Tauri 开发依赖](https://v2.tauri.app/start/prerequisites/)，再运行：
 
 ```sh
+git clone https://github.com/MR5356/Vovis.git
+cd Vovis
 npm ci
 npm run desktop:dev
 ```
 
-`npm run tauri dev` is also supported. The project launcher prioritizes rustup from `$CARGO_HOME/bin` or `~/.cargo/bin`, avoiding older Cargo binaries earlier on the shell PATH without changing global shell settings.
+`npm run desktop:dev` 会启动桌面应用并使用本地端口 5173。`npm test` 运行前端测试，`npm run desktop:build` 构建当前平台的安装包。
 
-`desktop:dev` starts Vite on port 5173. Stop a separately started Vite server first. Browser-only UX preview remains available with `npm run dev`.
+## 许可证
 
-```sh
-npm test
-npm run build
-cargo test --manifest-path src-tauri/Cargo.toml --lib
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-npm run desktop:build
-```
-
-## Architecture
-
-- `src/domain`: shared types, runtime workspace validation, and prompt construction.
-- `src/infrastructure`: typed Tauri bridge; initial hydration and serialized writes.
-- `src/components`: native window drag region, audience window, real model generation / TTS preview, and error boundary.
-- `src-tauri/src/commands.rs`: window-scoped IPC boundary; blocking persistence runs in a worker.
-- `src-tauri/src/storage.rs`: versioned SQLite workspace, immutable PDF files, atomic local credential file writes. No OS keychain.
-- `src-tauri/src/providers`: provider protocol implementations, bounded responses, timeouts, and credential handling within Rust.
-- `src-tauri/src/window`: native OS controls and audience window lifecycle. macOS uses overlay titlebar and native traffic lights; Windows DWM and Linux GTK use platform modules.
-
-The native renderer hydrates SQLite before mounting. Invalid saved data produces an error screen instead of overwriting it. PDF resources use immutable IDs so later imports do not replace historical assets. Credentials are separate from project data and exports. Browser preview does not accept real credentials.
-
-## GitHub releases and updates
-
-Push a stable version tag to build the desktop release. The tag sets the bundled application version, so pushing `v1.0.0` produces version `1.0.0` even if the development version is older.
-
-```sh
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-The release includes macOS DMGs for Apple silicon and Intel, Windows NSIS installers for x64 and ARM64, and Linux AppImages for x64 and ARM64. The workflow verifies every update package with the public key embedded in Vovis before publishing the installers and `latest.json` together.
-
-Before the first tag, add the matching private key as the repository Actions secret `TAURI_SIGNING_PRIVATE_KEY`. If the key is encrypted, also set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep a private backup of this key for future updates. For an independent fork, generate a separate key with `npm run tauri -- signer generate -w <private-key-path>`, set the public key and release endpoint in `src-tauri/tauri.conf.json`, and configure the fork's own secrets.
-
-The desktop project list checks for updates at startup. An available version can be downloaded, verified and installed from the sidebar. Settings also provides a manual check. For Linux in-app updates, run the downloaded AppImage from a writable location.
-
-## License
-
-Vovis is distributed under the [MIT License](LICENSE). UI components adapted from shadcn/ui carry the [upstream MIT notice](licenses/shadcn-ui.txt).
+Vovis 使用 [MIT 许可证](LICENSE)。改编自 shadcn/ui 的组件保留了[原项目的 MIT 声明](licenses/shadcn-ui.txt)。
