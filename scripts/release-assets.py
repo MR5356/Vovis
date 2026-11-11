@@ -18,6 +18,16 @@ bundles = {
 platforms = [f"{system}-{arch}" for system in bundles for arch in ("aarch64", "x86_64")]
 
 
+def packages(platform):
+    system = platform.split("-")[0]
+    pattern, suffix = bundles[system]
+    yield platform, pattern, suffix
+    if system == "linux":
+        # Preserve the old AppImage target for existing clients, while installed
+        # Debian clients select the more specific OS-ARCH-deb updater target.
+        yield f"{platform}-deb", "deb/*.deb", ".deb"
+
+
 def version():
     tag = os.environ["GITHUB_REF_NAME"]
     if not re.fullmatch(r"v(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){2}", tag):
@@ -33,13 +43,13 @@ def stage(platform, directory):
     if platform not in platforms:
         raise ValueError(platform)
     system = platform.split("-")[0]
-    pattern, suffix = bundles[system]
-    source, = directory.glob(pattern)
     out = Path("release-assets")
     out.mkdir(exist_ok=True)
-    name = asset_name(platform, suffix)
-    shutil.copyfile(source, out / name)
-    shutil.copyfile(str(source) + ".sig", out / (name + ".sig"))
+    for _, pattern, suffix in packages(platform):
+        source, = directory.glob(pattern)
+        name = asset_name(platform, suffix)
+        shutil.copy2(source, out / name)
+        shutil.copyfile(str(source) + ".sig", out / (name + ".sig"))
     if system == "darwin":
         dmg, = directory.glob("dmg/*.dmg")
         shutil.copyfile(dmg, out / asset_name(platform, ".dmg"))
@@ -56,16 +66,19 @@ def manifest(out):
         sig = Path(temp) / "minisign.sig"
         for platform in platforms:
             system = platform.split("-")[0]
-            name = asset_name(platform, bundles[system][1])
             if system == "darwin" and not (out / asset_name(platform, ".dmg")).stat().st_size:
                 raise ValueError(f"Empty {platform} disk image")
-            signature = (out / (name + ".sig")).read_text().strip()
-            sig.write_bytes(base64.b64decode(signature, validate=True))
-            subprocess.run(["minisign", "-Vm", str(out / name), "-p", str(public), "-x", str(sig)], check=True)
-            trusted = next(line for line in sig.read_text().splitlines() if line.startswith("trusted comment: "))
-            if f"version:{version()}" not in trusted.split("\t"):
-                raise ValueError(f"Signed version does not match {tag}: {name}")
-            entries[platform] = {"signature": signature, "url": f"https://github.com/{repo}/releases/download/{tag}/{name}"}
+            for target, _, suffix in packages(platform):
+                name = asset_name(platform, suffix)
+                if not (out / name).stat().st_size:
+                    raise ValueError(f"Empty package: {name}")
+                signature = (out / (name + ".sig")).read_text().strip()
+                sig.write_bytes(base64.b64decode(signature, validate=True))
+                subprocess.run(["minisign", "-Vm", str(out / name), "-p", str(public), "-x", str(sig)], check=True)
+                trusted = next(line for line in sig.read_text().splitlines() if line.startswith("trusted comment: "))
+                if f"version:{version()}" not in trusted.split("\t"):
+                    raise ValueError(f"Signed version does not match {tag}: {name}")
+                entries[target] = {"signature": signature, "url": f"https://github.com/{repo}/releases/download/{tag}/{name}"}
     (out / "latest.json").write_text(json.dumps({"version": version(), "platforms": entries}, indent=2) + "\n")
 
 

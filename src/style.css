@@ -2947,14 +2947,14 @@ input:disabled {
 html[data-runtime="desktop"],
 html[data-runtime="desktop"] body,
 html[data-runtime="desktop"] #root {
-  background: transparent !important;
+  background: #f7f6ff;
   min-height: 100%;
 }
 html[data-runtime="desktop"] .app-shell {
-  margin: 8px;
-  min-height: calc(100vh - 16px);
-  padding-top: 40px;
-  border-radius: 22px;
+  margin: 0;
+  min-height: 100vh;
+  padding-top: 0;
+  border-radius: 0;
   background: linear-gradient(120deg, #f7f6ff, #f0eef9);
   box-shadow: none;
 }
@@ -2967,15 +2967,68 @@ html[data-runtime="desktop"] .sidebar nav {
 }
 .desktop-dragbar {
   position: fixed;
-  top: 8px;
-  left: 8px;
-  right: 8px;
-  height: 40px;
+  top: 0;
+  left: 0;
+  right: 138px;
+  height: 28px;
   z-index: 25;
 }
+.window-controls {
+  position: fixed;
+  top: 0;
+  right: 0;
+  display: flex;
+  z-index: 100;
+  pointer-events: auto;
+}
+.window-controls button {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 28px;
+  padding: 0;
+  border-radius: 0;
+  color: #55536b;
+}
+.window-controls button:hover {
+  background: #dedce8;
+}
+.window-controls .window-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+.window-controls button:active {
+  transform: none;
+}
+.window-controls button:focus-visible {
+  outline-offset: -3px;
+}
+.window-control-error {
+  position: absolute;
+  top: 32px;
+  right: 8px;
+  white-space: nowrap;
+  background: #fff;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+}
+/* GTK does not supply resize grips for an undecorated window. */
+.window-resize-handles > div {
+  position: fixed;
+  z-index: 101;
+  pointer-events: auto;
+}
+.window-resize-handles [data-direction="North"] { top: 0; left: 5px; right: 5px; height: 4px; cursor: n-resize; }
+.window-resize-handles [data-direction="South"] { bottom: 0; left: 5px; right: 5px; height: 4px; cursor: s-resize; }
+.window-resize-handles [data-direction="East"] { right: 0; top: 5px; bottom: 5px; width: 4px; cursor: e-resize; }
+.window-resize-handles [data-direction="West"] { left: 0; top: 5px; bottom: 5px; width: 4px; cursor: w-resize; }
+.window-resize-handles [data-direction="NorthEast"] { top: 0; right: 0; width: 5px; height: 5px; cursor: ne-resize; }
+.window-resize-handles [data-direction="NorthWest"] { top: 0; left: 0; width: 5px; height: 5px; cursor: nw-resize; }
+.window-resize-handles [data-direction="SouthEast"] { bottom: 0; right: 0; width: 5px; height: 5px; cursor: se-resize; }
+.window-resize-handles [data-direction="SouthWest"] { bottom: 0; left: 0; width: 5px; height: 5px; cursor: sw-resize; }
 html[data-runtime="desktop"] .replay-shell {
-  margin: 8px;
-  min-height: calc(100vh - 16px);
+  margin: 0;
+  min-height: 100vh;
   padding-top: 55px;
 }
 .audience-window {
@@ -3103,7 +3156,7 @@ html[data-runtime="desktop"] .replay-shell {
   }
 }
 
-/* The native window is transparent only outside its opaque application surface. */
+/* Fill the native client area without a transparent gutter or a second frame. */
 html,
 body,
 #root {
@@ -3152,19 +3205,19 @@ body,
   border-radius: 9px;
 }
 html[data-runtime="desktop"] .app-shell {
-  height: calc(100dvh - 16px);
+  height: 100dvh;
   min-height: 0;
-  border-radius: 14px;
+  border-radius: 0;
   background-color: #fff;
 }
 html[data-runtime="desktop"] .sidebar {
   border-radius: 0;
   background: #fff;
 }
-html[data-platform="macos"] .app-shell {
+html[data-runtime="desktop"] .app-shell {
   padding-top: 0;
 }
-html[data-platform="macos"] .sidebar {
+html[data-runtime="desktop"] .sidebar {
   padding-top: 52px;
 }
 html[data-platform="macos"] .desktop-dragbar {
@@ -3172,6 +3225,7 @@ html[data-platform="macos"] .desktop-dragbar {
   left: 0;
   right: auto;
   width: 180px;
+  height: 40px;
 }
 .feishu-config {
   text-align: left;
@@ -3548,15 +3602,16 @@ html[data-platform="macos"] .desktop-dragbar {
   border-radius: 14px;
 }
 html[data-runtime="desktop"] .replay-shell {
-  height: calc(100dvh - 16px);
+  height: 100dvh;
   min-height: 0;
 }
-/* Align the content with the native frame that owns the macOS window controls. */
-html[data-platform="macos"] :is(.app-shell, .replay-shell) {
+/* All desktop platforms share the same edge-to-edge application surface. */
+html[data-runtime="desktop"] :is(.app-shell, .replay-shell) {
   margin: 0;
   height: 100dvh;
   max-width: none;
   border-radius: 0;
+  border: 0;
 }
 
 /* Keep navigation and controls from selecting text on repeated clicks. */

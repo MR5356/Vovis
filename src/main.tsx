@@ -2642,9 +2642,11 @@ async function bootstrap() {
   const root = createRoot(document.getElementById("root")!);
   if (isDesktop) {
     document.documentElement.dataset.runtime = "desktop";
-    if (/^Mac/.test(navigator.platform)) {
-      document.documentElement.dataset.platform = "macos";
-    }
+    document.documentElement.dataset.platform = /^Mac/.test(navigator.platform)
+      ? "macos"
+      : /^Win/.test(navigator.platform)
+        ? "windows"
+        : "linux";
   }
   if (new URLSearchParams(location.search).get("view") === "presentation") {
     root.render(
@@ -2654,6 +2656,8 @@ async function bootstrap() {
     );
     return;
   }
+  // Keep caption buttons available while loading or recovering the workspace.
+  root.render(<DesktopChrome />);
   // A file dropped outside an import target must not navigate away from the workspace.
   function preventFileNavigation(event: DragEvent) {
     if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
@@ -2664,9 +2668,9 @@ async function bootstrap() {
     const storage = await initializeWorkspace();
     root.render(
       <>
+        <DesktopChrome />
         <ErrorBoundary>
           <Toaster theme="light" position="bottom-center" />
-          <DesktopChrome />
           <AppUpdateProvider>
             <Manager Workspace={App} defaults={defaults} storage={storage} />
           </AppUpdateProvider>
@@ -2676,6 +2680,7 @@ async function bootstrap() {
   } catch {
     root.render(
       <main className="startup-error">
+        <DesktopChrome />
         <h1>无法打开本地工作空间</h1>
         <p>原有数据未被覆盖。请检查磁盘空间和应用数据目录权限，然后重试。</p>
         <Button variant="ghost" onClick={() => location.reload()}>

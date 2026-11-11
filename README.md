@@ -14,7 +14,9 @@ Vovis 是一款能替你讲解 PDF 幻灯片的桌面应用。你可以逐页准
 | --- | --- | --- |
 | macOS | M 系列芯片选 `darwin-aarch64.dmg`，Intel 芯片选 `darwin-x86_64.dmg` 结尾的文件 | 打开 DMG，把 Vovis 拖入「应用程序」 |
 | Windows | Intel / AMD 电脑选 `windows-x86_64-setup.exe`，ARM 电脑选 `windows-aarch64-setup.exe` 结尾的文件 | 双击安装程序，按提示安装 |
-| Linux | Intel / AMD 电脑选 `linux-x86_64.AppImage`，ARM64 电脑选 `linux-aarch64.AppImage` 结尾的文件 | 将文件放在可写目录，赋予执行权限后运行 |
+| Linux（Ubuntu 22.04+ / Debian 12+） | Intel / AMD 电脑选 `linux-x86_64.deb`，ARM64 电脑选 `linux-aarch64.deb` 结尾的文件 | 双击使用系统软件安装器安装，之后从应用菜单打开 Vovis，无需手动添加执行权限 |
+
+Linux 同时提供 `.AppImage` 便携包。浏览器下载通常不保留执行权限，因此 AppImage 不能保证下载后直接双击运行；优先使用 `.deb`。精简桌面若未关联 `.deb` 安装器，可运行 `sudo apt install ./Vovis-版本号-linux-x86_64.deb`（ARM64 替换文件名）。AppImage 需赋予执行权限，部分系统还需安装 FUSE 2。Linux 包使用 Ubuntu 22.04（GLIBC 2.35）构建，并检查应用及打包库的 GLIBC 依赖；不支持缺少 WebKitGTK 4.1 的旧发行版。安装版和便携版使用各自格式的应用更新。
 
 ## 完成第一场演讲
 

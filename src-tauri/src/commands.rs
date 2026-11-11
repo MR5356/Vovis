@@ -77,8 +77,12 @@ pub(crate) async fn has_credential(
     repository_task(app, move |repo| Ok(repo.secret(&id)?.is_some())).await
 }
 #[tauri::command]
-pub(crate) fn open_presentation(app: AppHandle, window: WebviewWindow) -> AppResult<()> {
+pub(crate) async fn open_presentation(app: AppHandle, window: WebviewWindow) -> AppResult<()> {
     main_only(&window)?;
+    // WebView2 creation deadlocks inside a synchronous IPC command on Windows.
+    // Serialize async requests so rapid clicks cannot create the same label twice.
+    static OPENING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _opening = OPENING.lock().await;
     Ok(window::open_presentation(&app)?)
 }
 #[tauri::command]
