@@ -1,5 +1,5 @@
 import { fileSelectionError } from "../domain/fileSelection";
-import { getDocument } from "pdfjs-dist";
+import { loadPdfDocument } from "./pdfDocument";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import type { ProjectContent, Slide } from "../domain/workspace";
 import { putPdf, uid } from "../storage";
@@ -52,7 +52,7 @@ export async function prepareProjectPdf(
 ): Promise<PreparedPdf> {
   const error = fileSelectionError("pdf", file);
   if (error) throw new Error(error);
-  const task = getDocument({ data: await file.arrayBuffer() });
+  const task = loadPdfDocument(await file.arrayBuffer());
   try {
     const doc = await task.promise;
     const meta = await doc.getMetadata().catch(() => null);

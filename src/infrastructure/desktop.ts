@@ -63,6 +63,8 @@ export async function credentialExists(id: string): Promise<boolean> {
 }
 
 export type PresentationPayload = {
+  revision: string;
+  reload?: number;
   title: string;
   slide: { title: string; script: string; kind?: string };
   page: number;
@@ -71,15 +73,8 @@ export type PresentationPayload = {
 
 export async function publishPresentation(
   payload: PresentationPayload,
-): Promise<void> {
-  if (isDesktop) await invoke("update_presentation", { payload });
-}
-
-export async function openAudienceWindow(
-  payload: PresentationPayload,
-): Promise<void> {
-  await publishPresentation(payload);
-  await invoke("open_presentation");
+): Promise<boolean> {
+  return isDesktop && invoke<boolean>("update_presentation", { payload });
 }
 
 export async function completeText(

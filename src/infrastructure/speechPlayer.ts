@@ -2,15 +2,50 @@ import type { SessionUsage } from "../domain/sessionUsage";
 import type { Connection } from "../domain/workspace";
 import { protocolFor, speechFormat } from "../domain/modelProtocol";
 import type { PreparedSpeech } from "./narrationBuffer";
+import type { ProjectLanguage } from "../domain/language";
 import { streamSpeech, type SpeechEvent } from "./desktop";
 import { PcmStream } from "./pcmStream";
 
 let context: AudioContext | undefined;
+const resuming = new WeakMap<AudioContext, Promise<void>>();
+
+function ensureAudioRunning(clock: AudioContext): Promise<void> {
+  if (clock.state === "running") return Promise.resolve();
+  const existing = resuming.get(clock);
+  if (existing) return existing;
+  // Invoke resume synchronously so a caller's user gesture is preserved.
+  let resumed: Promise<void>;
+  try {
+    resumed = clock.resume();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  let timeout: ReturnType<typeof setTimeout>;
+  const task = Promise.race([
+    resumed.then(() => {
+      if (clock.state !== "running") throw new Error("音频设备尚未恢复");
+    }),
+    new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(new Error("音频输出恢复超时")), 8000);
+    }),
+  ])
+    .catch((error) => {
+      throw new Error(
+        `无法恢复音频输出，请检查系统输出设备后点击继续讲解 · ${String(error)}`,
+      );
+    })
+    .finally(() => {
+      clearTimeout(timeout);
+      resuming.delete(clock);
+    });
+  resuming.set(clock, task);
+  return task;
+}
 
 /** Call in the start/resume gesture so WebKit can unlock audio output. */
 export function unlockSpeechAudio() {
-  context ??= new AudioContext();
-  return context.resume();
+  if (!context || context.state === "closed") context = new AudioContext();
+  return ensureAudioRunning(context);
 }
 
 export function recordNarration() {
@@ -49,6 +84,7 @@ export interface SpeechMetrics {
 }
 
 export interface SpeechOptions {
+  language?: ProjectLanguage;
   prepared?: PreparedSpeech;
   verifyScript?: boolean;
   usage?: SessionUsage;
@@ -101,6 +137,7 @@ export function playSpeech(options: SpeechOptions) {
   >();
   const pending: { buffer: AudioBuffer; offset: number }[] = [];
   let paused = false;
+  let resumeGeneration = 0;
   let stopped = false;
   let receivedDone = false;
   let decoding = Promise.resolve();
@@ -114,6 +151,7 @@ export function playSpeech(options: SpeechOptions) {
   function stop() {
     if (stopped) return;
     stopped = true;
+    clock!.removeEventListener("statechange", recoverAudio);
     cancelRequest();
     if (timer !== undefined) clearInterval(timer);
     for (const node of nodes.keys()) {
@@ -133,6 +171,10 @@ export function playSpeech(options: SpeechOptions) {
 
   function report() {
     if (stopped || paused) return;
+    if (clock!.state !== "running") {
+      recoverAudio();
+      return;
+    }
     if (
       firstAt !== undefined &&
       metrics.firstPlaybackMs === undefined &&
@@ -195,6 +237,7 @@ export function playSpeech(options: SpeechOptions) {
   }
 
   function pause() {
+    resumeGeneration++;
     if (stopped || paused) return;
     paused = true;
     const now = clock!.currentTime;
@@ -215,11 +258,32 @@ export function playSpeech(options: SpeechOptions) {
 
   function resume() {
     if (stopped || !paused) return;
+    if (clock!.state !== "running") {
+      const generation = ++resumeGeneration;
+      void ensureAudioRunning(clock!)
+        .then(() => {
+          if (!stopped && paused && generation === resumeGeneration) resume();
+        })
+        .catch(fail);
+      return;
+    }
     paused = false;
     for (const { buffer, offset } of pending.splice(0))
       playBuffer(buffer, offset);
     report();
   }
+
+  let recovery: Promise<void> | undefined;
+  function recoverAudio() {
+    if (stopped || paused || clock!.state === "running" || recovery) return;
+    recovery = ensureAudioRunning(clock!)
+      .catch(fail)
+      .finally(() => {
+        recovery = undefined;
+      });
+  }
+  clock.addEventListener("statechange", recoverAudio);
+  recoverAudio();
 
   let reportTokens: ReturnType<SessionUsage["submit"]> | undefined;
   const receive = (event: SpeechEvent) => {
@@ -248,6 +312,8 @@ export function playSpeech(options: SpeechOptions) {
     }
     decoding = decoding
       .then(async () => {
+        if (stopped) return;
+        await ensureAudioRunning(clock);
         if (stopped) return;
         try {
           const bytes = decodeBase64(event.data);

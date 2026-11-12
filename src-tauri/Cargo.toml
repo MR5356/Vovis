@@ -25,7 +25,8 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+# Honor trusted enterprise certificates and OS proxy settings (including Windows).
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls-native-roots", "system-proxy"] }
 
 base64 = "0.22"
 tokio = { version = "1", features = ["sync", "macros", "net", "io-util", "time"] }

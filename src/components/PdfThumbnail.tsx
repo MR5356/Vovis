@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
+import { renderPdfPage } from "../infrastructure/pdfDocument";
 
 export function PdfThumbnail({
   pdf,
@@ -28,9 +29,7 @@ export function PdfThumbnail({
           target.clientHeight / original.height,
         );
       const viewport = page.getViewport({ scale });
-      target.width = Math.ceil(viewport.width);
-      target.height = Math.ceil(viewport.height);
-      task = page.render({ canvasContext: target.getContext("2d")!, viewport });
+      task = renderPdfPage(page, target, viewport);
       await task.promise;
     }
 

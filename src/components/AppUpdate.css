@@ -1,0 +1,35 @@
+.update-error {
+  color: var(--destructive, #b42318);
+  overflow-wrap: anywhere;
+}
+
+.update-release-notes {
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border, #e6e1ed);
+  border-radius: 10px;
+}
+
+.update-release-notes h3 {
+  margin: 0 0 10px;
+}
+
+.update-release-notes p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.update-download {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.update-download progress {
+  width: 100%;
+  height: 12px;
+  accent-color: var(--primary, #7654bb);
+}

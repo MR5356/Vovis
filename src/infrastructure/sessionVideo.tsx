@@ -13,7 +13,7 @@ import {
   EncodedPacketSink,
   getFirstEncodableVideoCodec,
 } from "mediabunny";
-import { getDocument } from "pdfjs-dist";
+import { loadPdfDocument, renderPdfPage } from "./pdfDocument";
 import { invoke } from "@tauri-apps/api/core";
 import { SampleSlide } from "../slides";
 import { getNarration, getPdf, type SessionRecord } from "../storage";
@@ -64,9 +64,10 @@ export async function exportSessionVideo(
     getNarration(record.id),
   ]);
   if (record.pdfAssetId && !pdfFile) throw new Error("找不到这场演讲的 PDF");
-  const doc = pdfFile
-    ? await getDocument({ data: await pdfFile.arrayBuffer() }).promise
+  const loading = pdfFile
+    ? loadPdfDocument(await pdfFile.arrayBuffer())
     : undefined;
+  const doc = await loading?.promise;
   const input = audioFile
     ? new Input({ source: new BlobSource(audioFile), formats: [MP4, MATROSKA] })
     : undefined;
@@ -108,12 +109,7 @@ export async function exportSessionVideo(
             ),
           });
           const slide = document.createElement("canvas");
-          slide.width = Math.ceil(viewport.width);
-          slide.height = Math.ceil(viewport.height);
-          await page.render({
-            canvasContext: slide.getContext("2d")!,
-            viewport,
-          }).promise;
+          await renderPdfPage(page, slide, viewport).promise;
           ctx.fillStyle = "#15151a";
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.drawImage(
@@ -173,6 +169,6 @@ export async function exportSessionVideo(
   } finally {
     if (started) await output.cancel().catch(() => {});
     input?.dispose();
-    await doc?.destroy();
+    await loading?.destroy();
   }
 }

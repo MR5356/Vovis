@@ -28,6 +28,9 @@ it("plays before DONE, cancels queued audio, and recovers on another request", a
   vi.stubGlobal(
     "AudioContext",
     class {
+      state = "running";
+      addEventListener() {}
+      removeEventListener() {}
       currentTime = 1;
       destination = {};
       resume() {
@@ -123,6 +126,9 @@ it("resumes at the interrupted sample and buffers incoming speech during a quest
   vi.stubGlobal(
     "AudioContext",
     class {
+      state = "running";
+      addEventListener() {}
+      removeEventListener() {}
       get currentTime() {
         return time;
       }
@@ -183,4 +189,119 @@ it("resumes at the interrupted sample and buffers incoming speech during a quest
   nodes[2].onended?.();
   expect(onEnd).toHaveBeenCalledOnce();
   expect(transport.stream).toHaveBeenCalledOnce();
+});
+
+async function interruptedPlayback() {
+  vi.useFakeTimers();
+  let receive!: (event: SpeechEvent) => void;
+  transport.stream.mockImplementation((_id, _text, _voice, callback) => {
+    receive = callback;
+    return vi.fn();
+  });
+  const start = vi.fn();
+  let clock!: FakeContext;
+  class FakeContext extends EventTarget {
+    state = "running";
+    currentTime = 1;
+    destination = {};
+    resume = vi.fn(async () => {
+      this.state = "running";
+    });
+    constructor() {
+      super();
+      clock = this;
+    }
+    decodeAudioData() {
+      return Promise.resolve({ length: 100, duration: 1 });
+    }
+    createBufferSource() {
+      return {
+        start,
+        stop: vi.fn(),
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        playbackRate: { value: 1 },
+        onended: null,
+      };
+    }
+  }
+  vi.stubGlobal("AudioContext", FakeContext);
+  const { unlockSpeechAudio, playSpeech } = await import("./speechPlayer");
+  await unlockSpeechAudio();
+  const onError = vi.fn();
+  const onEnd = vi.fn();
+  const onMetrics = vi.fn();
+  const begin = () =>
+    playSpeech({
+      connection: {
+        id: "tts",
+        name: "speech",
+        type: "TTS",
+        model: "tts",
+        vendor: "",
+        url: "https://example.com",
+      },
+      voice: "voice",
+      text: "hello",
+      onError,
+      onEnd,
+      onMetrics,
+    });
+  return {
+    clock,
+    start,
+    begin,
+    receive: (event: SpeechEvent) => receive(event),
+    onError,
+    onEnd,
+    onMetrics,
+  };
+}
+
+it("restores a suspended context before scheduling the next sentence", async () => {
+  const fixture = await interruptedPlayback();
+  fixture.clock.state = "suspended";
+  const stop = fixture.begin();
+  fixture.receive({ kind: "audio", data: "AA==" });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(fixture.clock.resume).toHaveBeenCalledOnce();
+  expect(fixture.clock.state).toBe("running");
+  expect(fixture.start).toHaveBeenCalledOnce();
+  expect(fixture.onError).not.toHaveBeenCalled();
+  stop();
+});
+
+it("recovers system interruptions during playback and removes the listener on stop", async () => {
+  const fixture = await interruptedPlayback();
+  const stop = fixture.begin();
+  fixture.receive({ kind: "audio", data: "AA==" });
+  await vi.advanceTimersByTimeAsync(0);
+  fixture.clock.state = "interrupted";
+  fixture.clock.dispatchEvent(new Event("statechange"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(fixture.clock.resume).toHaveBeenCalledOnce();
+  expect(fixture.onEnd).not.toHaveBeenCalled();
+  stop();
+  fixture.clock.state = "suspended";
+  fixture.clock.dispatchEvent(new Event("statechange"));
+  expect(fixture.clock.resume).toHaveBeenCalledOnce();
+});
+
+it("fails a hung audio resume instead of silently showing playback forever", async () => {
+  const fixture = await interruptedPlayback();
+  fixture.clock.state = "suspended";
+  fixture.clock.resume.mockImplementation(() => new Promise<void>(() => {}));
+  fixture.begin();
+  fixture.receive({ kind: "audio", data: "AA==" });
+  fixture.receive({ kind: "done", firstChunkMs: 1 });
+  await vi.advanceTimersByTimeAsync(8100);
+  expect(fixture.onError).toHaveBeenCalledOnce();
+  expect(fixture.onError.mock.calls[0][0]).toContain("音频输出恢复超时");
+  expect(fixture.start).not.toHaveBeenCalled();
+  expect(
+    fixture.onMetrics.mock.calls.flatMap(([value]) =>
+      value.firstPlaybackMs === undefined ? [] : [value],
+    ),
+  ).toEqual([]);
+  expect(fixture.onEnd).not.toHaveBeenCalled();
 });

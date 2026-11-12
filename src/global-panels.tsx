@@ -12,7 +12,7 @@ import {
 } from "./components/NativeActions";
 import { CreateVoiceDialog } from "./components/CreateVoiceDialog";
 import { VoiceField } from "./components/VoiceField";
-import { ToastNotice } from "@/components/ToastNotice";
+import { notify } from "./infrastructure/notifications";
 import { AppDialog } from "@/components/AppDialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -31,7 +31,6 @@ import {
   testFeishuCredentials,
 } from "./infrastructure/desktop";
 import { useState, useEffect, useRef } from "react";
-import { toast } from "sonner";
 import {
   Layers,
   Mic,
@@ -129,11 +128,6 @@ export function ModelSettings({
     ? protocolsFor(editing.type).find((item) => item.id === selectedProtocol)
         ?.path
     : undefined;
-  const [toast, setToast] = useState("");
-  function notify(t: string) {
-    setToast(t);
-    setTimeout(() => setToast(""), 3000);
-  }
   function update(
     p: Partial<{ connections: Connection[]; bindings: Bindings }>,
   ) {
@@ -294,7 +288,6 @@ export function ModelSettings({
           </div>
         </Card>
       </>
-      <ToastNotice message={toast} />
       {voiceConnection && (
         <CreateVoiceDialog
           connection={voiceConnection}
@@ -678,12 +671,12 @@ function CopyableSetting({ label, value }: { label: string; value: string }) {
       selection.removeAllRanges();
       selection.addRange(range);
       if (!document.execCommand("copy")) {
-        toast("已选中文本，请使用系统复制快捷键");
+        notify("已选中文本，请使用系统复制快捷键");
         return;
       }
       selection.removeAllRanges();
     }
-    toast(`${label}已复制`);
+    notify(`${label}已复制`);
   }
   return (
     <span className="guide-copy-value">

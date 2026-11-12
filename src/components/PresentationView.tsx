@@ -1,15 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import * as pdfjs from "pdfjs-dist";
+import { emitTo, listen } from "@tauri-apps/api/event";
+import type * as pdfjs from "pdfjs-dist";
+import { loadPdfDocument, renderPdfPage } from "../infrastructure/pdfDocument";
 import { fitAudienceWindow } from "../infrastructure/presentationWindow";
 import { SampleSlide } from "../slides";
 import { getPdf } from "../storage";
 import type { PresentationPayload } from "../infrastructure/desktop";
+import type { PresentationStatus } from "../infrastructure/presentationSync";
 
 export function PresentationView() {
   const [payload, setPayload] = useState<PresentationPayload | null>(null);
   const [error, setError] = useState("");
+  const [pdf, setPdf] = useState<{
+    assetId: string;
+    reload?: number;
+    document?: pdfjs.PDFDocumentProxy;
+    error?: string;
+  } | null>(null);
   const [pageRatio, setPageRatio] = useState<number | null>(null);
   const ratio = payload && !payload.pdfAssetId ? 16 / 9 : pageRatio;
   useEffect(() => {
@@ -28,12 +36,17 @@ export function PresentationView() {
     let alive = true;
     let unlisten: (() => void) | undefined;
     void (async () => {
-      unlisten = await listen<PresentationPayload>(
+      const stop = await listen<PresentationPayload>(
         "presentation:update",
         (event) => {
           if (alive) setPayload(event.payload);
         },
       );
+      if (!alive) {
+        stop();
+        return;
+      }
+      unlisten = stop;
       const initial = await invoke<PresentationPayload | null>(
         "get_presentation",
       );
@@ -48,48 +61,86 @@ export function PresentationView() {
   }, []);
   useEffect(() => {
     setError("");
-    if (!payload?.pdfAssetId) {
-      setPageRatio(null);
-      return;
-    }
+    setPdf(null);
+    setPageRatio(null);
+    const assetId = payload?.pdfAssetId;
+    const reload = payload?.reload;
+    if (!assetId) return;
+    let alive = true;
+    let loading: pdfjs.PDFDocumentLoadingTask | undefined;
+    void (async () => {
+      const blob = await getPdf(assetId);
+      if (!blob) throw new Error("PDF 文件缺失");
+      const bytes = await blob.arrayBuffer();
+      if (!alive) return;
+      loading = loadPdfDocument(bytes);
+      const document = await loading.promise;
+      if (alive) setPdf({ assetId, reload, document });
+    })().catch(() => {
+      if (alive)
+        setPdf({
+          assetId,
+          reload,
+          error: "页面加载失败，请检查本地 PDF 文件后重试",
+        });
+    });
+    return () => {
+      alive = false;
+      void loading?.destroy();
+    };
+  }, [payload?.pdfAssetId, payload?.reload]);
+  useEffect(() => {
+    if (!payload) return;
     let alive = true;
     let task: pdfjs.RenderTask | undefined;
-    let document: pdfjs.PDFDocumentProxy | undefined;
+    let frame: number | undefined;
+    setError("");
+    const report = (status: PresentationStatus) => {
+      if (alive)
+        void emitTo("main", "presentation:status", status).catch(console.error);
+    };
     void (async () => {
-      const blob = await getPdf(payload.pdfAssetId);
-      if (!blob) throw new Error("PDF 文件缺失");
-      document = await pdfjs.getDocument({ data: await blob.arrayBuffer() })
-        .promise;
-      if (!alive) {
-        await document.destroy();
-        return;
+      if (payload.pdfAssetId) {
+        if (
+          pdf?.assetId !== payload.pdfAssetId ||
+          pdf.reload !== payload.reload
+        )
+          return;
+        if (pdf.error) throw new Error(pdf.error);
+        if (!pdf.document) return;
+        const page = await pdf.document.getPage(payload.page + 1);
+        if (!alive || !canvas.current) return;
+        const viewport = page.getViewport({ scale: 2 });
+        setPageRatio(viewport.width / viewport.height);
+        task = renderPdfPage(page, canvas.current, viewport);
+        await task.promise;
       }
-      const page = await document.getPage(payload.page + 1);
-      if (!alive || !canvas.current) return;
-      const viewport = page.getViewport({ scale: 2 });
-      setPageRatio(viewport.width / viewport.height);
-      canvas.current.width = viewport.width;
-      canvas.current.height = viewport.height;
-      task = page.render({
-        canvasContext: canvas.current.getContext("2d")!,
-        viewport,
-      });
-      await task.promise;
+      if (alive)
+        frame = requestAnimationFrame(() =>
+          report({ state: "ready", revision: payload.revision }),
+        );
     })().catch((e) => {
-      if (alive && e?.name !== "RenderingCancelledException")
-        setError("页面加载失败，请检查本地 PDF 文件");
+      if (alive && e?.name !== "RenderingCancelledException") {
+        const message =
+          "演示窗口页面加载失败，请点击「继续讲解」重试，或重新导入 PDF";
+        setError(message);
+        report({ state: "error", revision: payload.revision, message });
+      }
     });
     return () => {
       alive = false;
       task?.cancel();
-      void document?.destroy();
+      if (frame !== undefined) cancelAnimationFrame(frame);
     };
-  }, [payload?.pdfAssetId, payload?.page]);
+  }, [pdf, payload?.revision]);
   return (
     <main className="audience-window">
-      {error ? (
-        <p role="alert">{error}</p>
-      ) : payload ? (
+      {error && (
+        <p role="alert" style={{ position: "absolute", zIndex: 1 }}>
+          {error}
+        </p>
+      )}
+      {payload ? (
         payload.pdfAssetId ? (
           <canvas ref={canvas} />
         ) : (

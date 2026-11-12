@@ -41,6 +41,7 @@ export function FeishuMeetingChat({
   onOpenSettings,
   onMeetingReady,
   onMeetingSelected,
+  onCheckingChange,
   onMessage,
   onAuthorizationChange,
   onQuestion,
@@ -53,6 +54,7 @@ export function FeishuMeetingChat({
   onOpenSettings?: () => void;
   onMeetingReady?: (meetingId: string) => void;
   onMeetingSelected?: (selected: boolean) => void;
+  onCheckingChange?: (checking: boolean) => void;
   queuedQuestions?: ReadonlySet<string>;
   onMessage?: (key: string, text: string) => void;
   onAuthorizationChange: (authorized: boolean) => void;
@@ -62,7 +64,7 @@ export function FeishuMeetingChat({
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [meetingId, setMeetingId] = useState(initialMeetingId);
   const [connected, setConnected] = useState(Boolean(initialMeetingId));
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(rehearsal && Boolean(appId));
   const [authorized, setAuthorized] = useState(Boolean(initialMeetingId));
   const [status, setStatus] = useState("未连接");
   const pollInterval = useRef(2500);
@@ -71,6 +73,7 @@ export function FeishuMeetingChat({
   const consumer = useRef(onQuestion);
   const messageConsumer = useRef(onMessage);
   const mounted = useRef(false);
+  const discovery = useRef(0);
   const messageKey = (message: Message) =>
     `${message.meeting_id}:${message.message_id}`;
 
@@ -80,14 +83,21 @@ export function FeishuMeetingChat({
   }, [onQuestion, onMessage]);
 
   useEffect(() => {
+    if (rehearsal) onCheckingChange?.(busy || connected);
+  }, [rehearsal, busy, connected, onCheckingChange]);
+
+  useEffect(() => {
     mounted.current = true;
     if (rehearsal && appId) void discover(false);
     return () => {
       mounted.current = false;
+      discovery.current++;
     };
   }, [appId, rehearsal]);
 
   async function discover(login: boolean) {
+    const attempt = ++discovery.current;
+    const current = () => mounted.current && discovery.current === attempt;
     onMeetingReady?.("");
     setConnected(false);
     setBusy(true);
@@ -95,14 +105,14 @@ export function FeishuMeetingChat({
     try {
       if (login) {
         await loginToFeishu(appId, readGroup);
-        if (!mounted.current) return;
+        if (!current()) return;
         onAuthorizationChange(true);
         setAuthorized(true);
       }
       const items = await invoke<Meeting[]>("feishu_active_meetings", {
         appId,
       });
-      if (!mounted.current) return;
+      if (!current()) return;
       setAuthorized(true);
       onAuthorizationChange(true);
       const optedOut = meetings.length > 0 && !meetingId;
@@ -113,8 +123,10 @@ export function FeishuMeetingChat({
       setMeetings(items);
       setMeetingId(nextId);
       onMeetingSelected?.(Boolean(nextId));
+      if (rehearsal) setConnected(Boolean(nextId));
       setStatus(items.length ? "" : "未找到活跃会议，请先在飞书入会");
     } catch (error) {
+      if (!current()) return;
       const message = String(error);
       if (message.includes("授权失效")) {
         setAuthorized(false);
@@ -122,11 +134,12 @@ export function FeishuMeetingChat({
       }
       setStatus(message);
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   }
 
   async function logout() {
+    discovery.current++;
     onMeetingReady?.("");
     setConnected(false);
     setBusy(true);
@@ -276,6 +289,23 @@ export function FeishuMeetingChat({
             </div>
           )}
         </div>
+        {appId && (busy || connected || meetingId) && (
+          <Button
+            variant="ghost"
+            className="text-btn"
+            onClick={() => {
+              discovery.current++;
+              setBusy(false);
+              setConnected(false);
+              setMeetingId("");
+              onMeetingSelected?.(false);
+              onMeetingReady?.("");
+              setStatus("本次不连接会议，可直接本机主讲");
+            }}
+          >
+            本次不连接会议
+          </Button>
+        )}
         {!authorized && (
           <Button
             variant="outline"
@@ -292,11 +322,12 @@ export function FeishuMeetingChat({
             <NativeSelect
               aria-label="活跃会议"
               value={meetingId}
-              disabled={connected || busy}
+              disabled={busy}
               onChange={(event) => {
                 onMeetingReady?.("");
                 setMeetingId(event.target.value);
                 onMeetingSelected?.(Boolean(event.target.value));
+                setConnected(Boolean(event.target.value));
                 setMessages([]);
                 setStatus("");
               }}
@@ -311,18 +342,7 @@ export function FeishuMeetingChat({
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <Button
-              className="soft-primary"
-              variant="outline"
-              disabled={!meetingId || busy}
-              onClick={() => {
-                onMeetingReady?.("");
-                setConnected(!connected);
-                if (connected) setStatus("");
-              }}
-            >
-              {connected ? "取消检查" : "检查所选会议"}
-            </Button>
+            {connected && <span role="status">正在自动检查所选会议…</span>}
           </div>
         )}
         <p role="status" className="meeting-feedback">

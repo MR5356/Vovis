@@ -1,5 +1,6 @@
 """Stage native Tauri bundles and assemble the signed GitHub updater manifest."""
 import base64
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,25 @@ def asset_name(platform, suffix):
     return f"Vovis-{version()}-{platform}{suffix}"
 
 
+def release_notes():
+    path = Path("release-notes") / f"{version()}.md"
+    if not path.is_file():
+        raise ValueError(f"发布前必须填写更新日志：{path}")
+    notes = path.read_text(encoding="utf-8").strip()
+    # A version heading or an empty template is not a changelog.
+    content = re.sub(r"<!--.*?-->", "", notes, flags=re.S)
+    content = re.sub(r"^\s*#.*$", "", content, flags=re.M).strip()
+    lines = [re.sub(r"^\s*(?:[-*+]|\d+[.)])(?:\s+|$)", "", line).strip() for line in content.splitlines()]
+    if not any(line and not re.fullmatch(r"(?:TODO|TBD|待填写|待补充)[.!。！\s]*", line, re.I) for line in lines):
+        raise ValueError(f"更新日志不能为空或仅含占位文本：{path}")
+    return notes
+
+
+def configure():
+    release_notes()
+    Path("release.conf.json").write_text(json.dumps({"version": version(), "bundle": {"createUpdaterArtifacts": True}}), encoding="utf-8")
+
+
 def stage(platform, directory):
     if platform not in platforms:
         raise ValueError(platform)
@@ -56,6 +76,7 @@ def stage(platform, directory):
 
 
 def manifest(out):
+    notes = release_notes()
     config = json.loads(Path("src-tauri/tauri.conf.json").read_text())
     entries = {}
     tag = os.environ["GITHUB_REF_NAME"]
@@ -79,13 +100,22 @@ def manifest(out):
                 if f"version:{version()}" not in trusted.split("\t"):
                     raise ValueError(f"Signed version does not match {tag}: {name}")
                 entries[target] = {"signature": signature, "url": f"https://github.com/{repo}/releases/download/{tag}/{name}"}
-    (out / "latest.json").write_text(json.dumps({"version": version(), "platforms": entries}, indent=2) + "\n")
+    (out / "latest.json").write_text(json.dumps({
+        "version": version(),
+        "notes": notes,
+        "pub_date": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "platforms": entries,
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
     command, *args = sys.argv[1:]
     if command == "configure":
-        Path("release.conf.json").write_text(json.dumps({"version": version(), "bundle": {"createUpdaterArtifacts": True}}))
+        configure()
+    elif command == "notes":
+        notes = release_notes() + "\n"
+        if args:
+            Path(args[0]).write_text(notes, encoding="utf-8")
     elif command == "stage":
         stage(args[0], Path(args[1]))
     elif command == "manifest":

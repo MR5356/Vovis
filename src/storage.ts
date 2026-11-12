@@ -9,10 +9,11 @@ export type {
 const DB = "vovis-assets";
 async function db() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const r = indexedDB.open(DB, 2);
+    const r = indexedDB.open(DB, 3);
     r.onupgradeneeded = (event) => {
       if (!event.oldVersion) r.result.createObjectStore("pdf");
-      r.result.createObjectStore("narration");
+      if (event.oldVersion < 2) r.result.createObjectStore("narration");
+      if (event.oldVersion < 3) r.result.createObjectStore("prepared-speech");
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -46,6 +47,10 @@ async function putAsset(store: string, id: string, file: Blob) {
       d.close();
       reject(tx.error);
     };
+    tx.onabort = () => {
+      d.close();
+      reject(tx.error ?? new Error("本地文件保存已中止，请检查可用空间后重试"));
+    };
   });
 }
 export async function getPdf(id: string) {
@@ -58,6 +63,30 @@ export async function getPdf(id: string) {
 
 export function getNarration(id: string) {
   return getAsset("narration", id);
+}
+
+export const putPreparedSpeech = (key: string, file: Blob) =>
+  putAsset("prepared-speech", key, file);
+export const getPreparedSpeech = (key: string) =>
+  getAsset("prepared-speech", key);
+export async function deletePreparedSpeech(key: string) {
+  const d = await db();
+  return new Promise<void>((resolve, reject) => {
+    const tx = d.transaction("prepared-speech", "readwrite");
+    tx.objectStore("prepared-speech").delete(key);
+    tx.oncomplete = () => {
+      d.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      d.close();
+      reject(tx.error);
+    };
+    tx.onabort = () => {
+      d.close();
+      reject(tx.error ?? new Error("本地语音保存已中止"));
+    };
+  });
 }
 
 async function getAsset(store: string, id: string) {

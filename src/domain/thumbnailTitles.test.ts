@@ -1,5 +1,26 @@
 import { expect, it } from "vitest";
-import { parseThumbnailTitles, pendingThumbnailPages } from "./thumbnailTitles";
+import {
+  parseThumbnailTitles,
+  pendingThumbnailPages,
+  thumbnailTitleInstruction,
+} from "./thumbnailTitles";
+
+it("accepts readable English titles beyond the Chinese character limit while bounding word count", () => {
+  const title = "Architecture and execution workflow";
+  const response = JSON.stringify([{ page: 1, title }]);
+  expect(parseThumbnailTitles(response, [{ page: 1 }], "en-US").get(1)).toBe(
+    title,
+  );
+  expect(() => parseThumbnailTitles(response, [{ page: 1 }])).toThrow();
+  expect(() =>
+    parseThumbnailTitles(
+      JSON.stringify([{ page: 1, title: "word ".repeat(13) }]),
+      [{ page: 1 }],
+      "en-US",
+    ),
+  ).toThrow();
+  expect(thumbnailTitleInstruction("en-US")).toContain("英文短标题");
+});
 
 it("keeps original page numbers across saved, empty and script-only pages", () => {
   const pages = pendingThumbnailPages([

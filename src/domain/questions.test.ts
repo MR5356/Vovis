@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canAutoAnswer,
+  questionIntroduction,
   parseAnswerDraft,
   type AudienceQuestion,
 } from "./questions";
@@ -13,6 +14,23 @@ const question: AudienceQuestion = {
 };
 
 describe("automatic answers", () => {
+  it("uses English fallback introductions without adding Chinese punctuation", () => {
+    const draft = parseAnswerDraft(
+      '{"answer":"Open the project list.","confidence":92}',
+      { ...question, text: "How do I open a project" },
+      "en-US",
+    );
+    expect(draft.introduction).toBe(
+      "Someone in the audience asks: How do I open a project?",
+    );
+    expect(
+      questionIntroduction(
+        { id: 2, text: "What changed?" },
+        undefined,
+        "en-US",
+      ),
+    ).toBe("Let's take this question: What changed?");
+  });
   it.each([
     [89.99, false],
     [90, true],

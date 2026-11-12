@@ -1,6 +1,8 @@
 //! Requests are selected by the saved capability and protocol.
+mod network;
 mod sse;
 mod voice_upload;
+pub(crate) use network::feishu_network_error;
 use voice_upload::VoiceUpload;
 
 use crate::error::{AppError, AppResult};
@@ -571,7 +573,8 @@ async fn collect_bytes(
 pub(crate) fn feishu_client() -> AppResult<reqwest::Client> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(30))
         .build()
         .map_err(|_| invalid("网络初始化失败"))
 }
@@ -595,7 +598,7 @@ pub async fn test_feishu(app_id: &str, secret: &str) -> AppResult<()> {
         }))
         .send()
         .await
-        .map_err(|_| invalid("飞书认证请求失败，请检查网络"))?;
+        .map_err(|error| feishu_network_error("飞书认证", "accounts.feishu.cn", &error))?;
     let status = response.status();
     let bytes = read_bytes(response, 1024 * 1024).await?;
     let body: Value = serde_json::from_slice(&bytes)
@@ -668,10 +671,9 @@ pub async fn feishu_chat_messages(
         if !page_token.is_empty() {
             request = request.query(&[("page_token", &page_token)]);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|_| invalid("重试中：飞书关联群网络请求失败"))?;
+        let response = request.send().await.map_err(|error| {
+            feishu_network_error("重试中：飞书关联群读取", "open.feishu.cn", &error)
+        })?;
         let status = response.status();
         let body: Value = serde_json::from_slice(&read_bytes(response, 2 * 1024 * 1024).await?)
             .map_err(|_| invalid("飞书会议聊天响应格式无效"))?;

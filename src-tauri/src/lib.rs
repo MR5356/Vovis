@@ -1,6 +1,7 @@
 mod commands;
 mod error;
 mod feishu_meeting;
+mod project_archive;
 mod providers;
 mod storage;
 mod window;
@@ -31,6 +32,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            project_archive::save_project_package,
+            project_archive::remove_imported_pdf,
             commands::complete_text,
             commands::start_speech,
             commands::cancel_speech,

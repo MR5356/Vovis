@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { Slider } from "@/components/ui/slider";
-import { ToastNotice } from "@/components/ToastNotice";
+import { notify } from "./infrastructure/notifications";
 import { AppDialog } from "@/components/AppDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,12 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { UpdateNotice } from "./components/AppUpdate";
+import {
+  createProjectPackage,
+  readProjectPackage,
+  importProjectPackage,
+  saveProjectPackage,
+} from "./infrastructure/projectArchive";
 import type { WorkspaceStore } from "./infrastructure/desktop";
 import { useState, useEffect, useRef } from "react";
 import {
@@ -45,11 +51,13 @@ import {
   SkipBack,
   Volume2,
   Download,
+  Upload,
   Settings,
 } from "lucide-react";
 import { ModelSettings, GlobalSettings } from "./global-panels";
 import { SampleSlide } from "./slides";
-import * as pdfjs from "pdfjs-dist";
+import type * as pdfjs from "pdfjs-dist";
+import { loadPdfDocument, renderPdfPage } from "./infrastructure/pdfDocument";
 import {
   uid,
   time,
@@ -117,6 +125,7 @@ function seed(defaults: WorkspaceData): LibraryState {
         id: "example-session",
         projectId: "agent",
         title: "Agent 架构 · 完整彩排示例",
+        language: data.language,
         startedAt: "2026-11-06T10:00:00+08:00",
         duration: 180,
         demo: true,
@@ -232,18 +241,25 @@ export function Manager({
   const [name, setName] = useState("");
   const [target, setTarget] = useState<string | null>(null);
   const [editMaterial, setEditMaterial] = useState<Material | null>(null);
-  const [note, setNote] = useState("");
+  const packageInput = useRef<HTMLInputElement>(null);
+  const storeRef = useRef(store);
+  storeRef.current = store;
+  const explicitlySaved = useRef<LibraryState | null>(null);
+  const transferLock = useRef(false);
+  const [transfer, setTransfer] = useState<{
+    kind: "import" | "export";
+    busy: boolean;
+    message: string;
+    error?: string;
+    projectId?: string;
+  } | null>(null);
   useEffect(() => {
-    if (store === initialStore.current) return;
+    if (store === initialStore.current || store === explicitlySaved.current)
+      return;
     void storage
       .save(store)
-      .catch((reason) => setNote(`保存失败：${String(reason)}`));
+      .catch((reason) => notify(`保存失败：${String(reason)}`));
   }, [store, storage]);
-  useEffect(() => {
-    if (!note) return;
-    const t = setTimeout(() => setNote(""), 3500);
-    return () => clearTimeout(t);
-  }, [note]);
   const project = store.projects.find((p) => p.id === projectId);
   function saveData(data: WorkspaceData) {
     const { connections, bindings, ...projectData } = data;
@@ -251,14 +267,27 @@ export function Manager({
       ...s,
       projects: s.projects.map((p) =>
         p.id === projectId
-          ? { ...p, data: projectData, updatedAt: new Date().toISOString() }
+          ? {
+              ...p,
+              data: projectData,
+              updatedAt: new Date().toISOString(),
+              lastUsedAt: new Date().toISOString(),
+            }
           : p,
       ),
     }));
   }
   function openProject(id: string) {
+    markProjectUsed(id);
     setProjectId(id);
     setScreen("workspace");
+  }
+  function markProjectUsed(id: string) {
+    const lastUsedAt = new Date().toISOString();
+    setStore((s) => ({
+      ...s,
+      projects: s.projects.map((p) => (p.id === id ? { ...p, lastUsedAt } : p)),
+    }));
   }
   function saveRecord(r: SessionRecord) {
     setStore((s) => ({
@@ -268,26 +297,88 @@ export function Manager({
         : [r, ...s.sessions],
     }));
   }
-  function exportProject(p: Project) {
-    const payload = {
-      version: 1,
-      project: p,
-      materials: store.materials.filter((m) =>
-        p.data.materialIds.includes(m.id),
-      ),
-      note: "不包含密钥或 PDF 二进制；PDF 请另行备份。",
-    };
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json",
-      }),
-    );
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = p.data.title + ".vovis.json";
-    a.click();
-    URL.revokeObjectURL(url);
-    setNote("已导出项目文字与设置，不包含 PDF 和凭据");
+  function transferProgress(message: string) {
+    setTransfer((current) => (current ? { ...current, message } : current));
+  }
+  async function exportProject(p: Project) {
+    if (transferLock.current) return;
+    transferLock.current = true;
+    setTransfer({ kind: "export", busy: true, message: "正在整理项目…" });
+    try {
+      const { file, offlineReady } = await createProjectPackage(
+        p,
+        store.materials,
+        transferProgress,
+      );
+      transferProgress("正在保存项目包…");
+      const path = await saveProjectPackage(file, p.data.title);
+      setTransfer({
+        kind: "export",
+        busy: false,
+        message: `项目包已保存：${path}\n${offlineReady ? "含整场离线语音，可直接主讲。" : "已导出 PDF、讲稿和资料；未准备的语音需在目标机器配置服务生成。"}`,
+      });
+    } catch (error) {
+      setTransfer({
+        kind: "export",
+        busy: false,
+        message: "项目导出未完成",
+        error: String(error),
+      });
+    } finally {
+      transferLock.current = false;
+    }
+  }
+  async function importProject(file: File) {
+    if (transferLock.current) return;
+    transferLock.current = true;
+    setTransfer({
+      kind: "import",
+      busy: true,
+      message: "正在读取并校验项目包…",
+    });
+    const snapshot = storeRef.current;
+    try {
+      const bundle = await readProjectPackage(file, transferProgress);
+      const result = await importProjectPackage(
+        bundle,
+        snapshot,
+        async (next) => {
+          if (storeRef.current !== snapshot)
+            throw new Error("工作区已发生变化，请重新导入项目");
+          await storage.save(next);
+        },
+        transferProgress,
+      );
+      explicitlySaved.current = result.workspace;
+      setStore(result.workspace);
+      setArchived(false);
+      setSearch("");
+      const expected = new Set(
+        bundle.data.preparedNarration?.pages.flatMap((page) =>
+          page.clips.map((clip) => clip.key),
+        ) ?? [],
+      );
+      const complete =
+        !!bundle.data.preparedNarration &&
+        expected.size > 0 &&
+        expected.size === bundle.audioAssets.size &&
+        bundle.data.slides.every((slide) => slide.script.trim());
+      setTransfer({
+        kind: "import",
+        busy: false,
+        projectId: result.project.id,
+        message: `已导入「${result.project.data.title}」。${complete ? "整场语音已就绪，可以离线主讲，无需配置语音服务。" : "项目内容已恢复，离线语音尚未准备完整。"}`,
+      });
+    } catch (error) {
+      setTransfer({
+        kind: "import",
+        busy: false,
+        message: "项目导入未完成，原有项目不受影响",
+        error: String(error),
+      });
+    } finally {
+      transferLock.current = false;
+    }
   }
   if (screen === "workspace" && project)
     return (
@@ -315,7 +406,7 @@ export function Manager({
             ...s,
             materials: [...s.materials, { ...m, id: uid() }],
           }));
-          setNote("已复制到全局资料库");
+          notify("已复制到全局资料库");
         }}
       />
     );
@@ -432,14 +523,35 @@ export function Manager({
             </div>
             <div className="header-actions">
               {screen === "projects" ? (
-                <Button
-                  variant="default"
-                  className="primary"
-                  onClick={() => setDialog("new")}
-                >
-                  <Plus size={17} />
-                  新建演讲
-                </Button>
+                <>
+                  <input
+                    ref={packageInput}
+                    type="file"
+                    accept=".vovis,application/x-vovis-project"
+                    hidden
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (file) void importProject(file);
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    className="secondary"
+                    onClick={() => packageInput.current?.click()}
+                  >
+                    <Upload size={17} />
+                    导入项目
+                  </Button>
+                  <Button
+                    variant="default"
+                    className="primary"
+                    onClick={() => setDialog("new")}
+                  >
+                    <Plus size={17} />
+                    新建演讲
+                  </Button>
+                </>
               ) : screen === "library" ? (
                 <Button
                   variant="default"
@@ -542,6 +654,11 @@ export function Manager({
                     p.archived === archived &&
                     p.data.title.toLowerCase().includes(search.toLowerCase()),
                 )
+                .sort(
+                  (a, b) =>
+                    Date.parse(b.lastUsedAt ?? b.updatedAt) -
+                    Date.parse(a.lastUsedAt ?? a.updatedAt),
+                )
                 .map((p, i) => {
                   const records = store.sessions.filter(
                     (s) => s.projectId === p.id,
@@ -605,6 +722,7 @@ export function Manager({
                                       ...s.projects,
                                       {
                                         ...structuredClone(p),
+                                        lastUsedAt: new Date().toISOString(),
                                         id: uid(),
                                         data: {
                                           ...structuredClone(p.data),
@@ -621,10 +739,10 @@ export function Manager({
                                 复制项目
                               </DropdownMenuItem>
                               <DropdownMenuItem
-                                onSelect={() => exportProject(p)}
+                                onSelect={() => void exportProject(p)}
                               >
                                 <Download size={14} />
-                                导出文字与设置
+                                导出完整项目
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onSelect={() => {
@@ -669,6 +787,7 @@ export function Manager({
                             variant="ghost"
                             className="text-btn"
                             onClick={() => {
+                              markProjectUsed(p.id);
                               setProjectId(p.id);
                               setScreen("history");
                             }}
@@ -677,7 +796,9 @@ export function Manager({
                             <ArrowRight size={12} />
                           </Button>
                         </div>
-                        <small>最近编辑 {date(p.updatedAt)}</small>
+                        <small>
+                          最近使用 {date(p.lastUsedAt ?? p.updatedAt)}
+                        </small>
                       </div>
                     </Card>
                   );
@@ -836,7 +957,57 @@ export function Manager({
           </>
         )}
       </PageLayout>
-      <ToastNotice message={note} />
+      {transfer && (
+        <AppDialog
+          open
+          title={transfer.kind === "import" ? "导入项目" : "导出完整项目"}
+          onOpenChange={(open) => {
+            if (!open && !transfer.busy) setTransfer(null);
+          }}
+        >
+          <h2>{transfer.kind === "import" ? "导入项目" : "导出完整项目"}</h2>
+          <div className="dialog-body">
+            <p>
+              项目包包含 PDF、讲稿、语言设置、演讲资料和已准备的语音，不包含 API
+              密钥。
+            </p>
+            <p
+              role="status"
+              style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}
+            >
+              {transfer.message}
+            </p>
+            {transfer.busy && (
+              <progress aria-label="项目包处理进度" style={{ width: "100%" }} />
+            )}
+            {transfer.error && (
+              <p className="action-error" role="alert">
+                {transfer.error}
+              </p>
+            )}
+          </div>
+          {transfer.projectId && (
+            <Button
+              className="primary full"
+              onClick={() => {
+                const id = transfer.projectId!;
+                setTransfer(null);
+                openProject(id);
+              }}
+            >
+              打开导入的项目
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            className="secondary full"
+            disabled={transfer.busy}
+            onClick={() => setTransfer(null)}
+          >
+            关闭
+          </Button>
+        </AppDialog>
+      )}
       {dialog === "new" && (
         <NewProjectDialog
           onClose={() => setDialog("")}
@@ -1040,6 +1211,9 @@ function Replay({
   const markerIndex = events.findIndex((e) => e.id === current?.id);
   useEffect(() => {
     let alive = true;
+    let loading: pdfjs.PDFDocumentLoadingTask | undefined;
+    setPdf(null);
+    setPdfError(false);
     if (record.pdfAssetId)
       getPdf(record.pdfAssetId)
         .then(async (blob) => {
@@ -1047,14 +1221,18 @@ function Replay({
             if (alive) setPdfError(true);
             return;
           }
-          const doc = await pdfjs.getDocument({
-            data: await blob.arrayBuffer(),
-          }).promise;
+          const bytes = await blob.arrayBuffer();
+          if (!alive) return;
+          loading = loadPdfDocument(bytes);
+          const doc = await loading.promise;
           if (alive) setPdf(doc);
         })
-        .catch(() => setPdfError(true));
+        .catch(() => {
+          if (alive) setPdfError(true);
+        });
     return () => {
       alive = false;
+      void loading?.destroy();
     };
   }, [record.id]);
   useEffect(() => {
@@ -1066,12 +1244,7 @@ function Replay({
       .then((p) => {
         if (stop || !canvas.current) return;
         const v = p.getViewport({ scale: 1.4 });
-        canvas.current.width = v.width;
-        canvas.current.height = v.height;
-        task = p.render({
-          viewport: v,
-          canvasContext: canvas.current.getContext("2d")!,
-        });
+        task = renderPdfPage(p, canvas.current, v);
         return task.promise;
       })
       .catch(() => {});

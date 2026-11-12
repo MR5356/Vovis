@@ -47,6 +47,8 @@ class ReleaseTests(unittest.TestCase):
             release.stage("linux-x86_64", directory)
 
     def prepare_manifest(self):
+        Path("release-notes").mkdir()
+        Path("release-notes/1.2.3.md").write_text("- 修复 Windows 检查更新。\n", encoding="utf-8")
         Path("src-tauri").mkdir()
         Path("src-tauri/tauri.conf.json").write_text(json.dumps({
             "plugins": {"updater": {"pubkey": base64.b64encode(b"test key").decode()}}
@@ -67,12 +69,35 @@ class ReleaseTests(unittest.TestCase):
         out = self.prepare_manifest()
         with patch.object(release.subprocess, "run") as verify:
             release.manifest(out)
-        manifest = json.loads((out / "latest.json").read_text())
+        manifest = json.loads((out / "latest.json").read_text(encoding="utf-8"))
         self.assertEqual(len(manifest["platforms"]), 8)
         self.assertEqual(verify.call_count, 8)
+        self.assertEqual(manifest["notes"], "- 修复 Windows 检查更新。")
+        self.assertTrue(manifest["pub_date"].endswith("Z"))
         for arch in ("aarch64", "x86_64"):
             for target, suffix in [(f"linux-{arch}", ".AppImage"), (f"linux-{arch}-deb", ".deb")]:
                 self.assertTrue(manifest["platforms"][target]["url"].endswith(f"Vovis-1.2.3-linux-{arch}{suffix}"))
+            self.assertTrue(manifest["platforms"][f"windows-{arch}"]["url"].endswith(f"Vovis-1.2.3-windows-{arch}-setup.exe"))
+
+    def test_build_requires_notes_for_exact_tagged_version(self):
+        with self.assertRaisesRegex(ValueError, "1.2.3.md"):
+            release.configure()
+        Path("release-notes").mkdir()
+        Path("release-notes/1.2.2.md").write_text("- Earlier release", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "1.2.3.md"):
+            release.configure()
+        self.assertFalse(Path("release.conf.json").exists())
+        Path("release-notes/1.2.3.md").write_text("- 修复更新提示", encoding="utf-8")
+        release.configure()
+        self.assertEqual(json.loads(Path("release.conf.json").read_text())["version"], "1.2.3")
+
+    def test_rejects_empty_or_placeholder_notes(self):
+        Path("release-notes").mkdir()
+        for content in ["", "  \n", "# Vovis 1.2.3\n", "<!-- notes -->", "# 1.2.3\n- TODO", "- 待填写", "- TODO\n- TBD", "-\n-"]:
+            with self.subTest(content=content):
+                Path("release-notes/1.2.3.md").write_text(content, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "不能为空"):
+                    release.release_notes()
 
     def test_manifest_rejects_mismatched_signed_deb_version(self):
         out = self.prepare_manifest()

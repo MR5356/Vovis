@@ -93,7 +93,9 @@ async fn exchange(
         .json(&body)
         .send()
         .await
-        .map_err(|_| error("重试中：飞书授权服务网络异常"))?;
+        .map_err(|error| {
+            crate::providers::feishu_network_error("飞书账号授权", "open.feishu.cn", &error)
+        })?;
     let status = response.status();
     let body: Value = response
         .json()
@@ -306,7 +308,9 @@ async fn get(
         .bearer_auth(token)
         .send()
         .await
-        .map_err(|_| error("重试中：飞书网络请求失败"))?;
+        .map_err(|error| {
+            crate::providers::feishu_network_error("重试中：飞书会议读取", "open.feishu.cn", &error)
+        })?;
     let status = response.status();
     let body: Value = response
         .json()

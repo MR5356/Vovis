@@ -1,6 +1,8 @@
 import type { SessionUsage } from "../domain/sessionUsage";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Connection } from "../domain/workspace";
+import { DEFAULT_LANGUAGE, type ProjectLanguage } from "../domain/language";
+import type { OfflineNarrationSource } from "../infrastructure/preparedNarration";
 import type { SpeechMetrics } from "../infrastructure/speechPlayer";
 import { createNarrationBuffer } from "../infrastructure/narrationBuffer";
 import {
@@ -12,6 +14,9 @@ interface NarrationOptions {
   usage?: SessionUsage;
   active: boolean;
   playing: boolean;
+  ready?: boolean;
+  language?: ProjectLanguage;
+  offline?: OfflineNarrationSource;
   page: number;
   connection?: Connection;
   text: string;
@@ -29,33 +34,42 @@ export function usePageNarration(options: NarrationOptions) {
   const {
     active,
     playing,
+    ready = true,
     page,
-    connection,
+    connection: configuredConnection,
     text,
     nextPageText,
     rehearsalText,
-    voice,
+    voice: configuredVoice,
+    language = DEFAULT_LANGUAGE,
+    offline,
     recordingOutput,
     usage,
   } = options;
+  const connection = offline?.connection ?? configuredConnection;
+  const voice = offline?.voice ?? configuredVoice;
   const buffer = useMemo(
-    () => (connection ? createNarrationBuffer(connection, voice) : null),
-    [connection, voice],
+    () =>
+      connection ? createNarrationBuffer(connection, voice, offline) : null,
+    [connection, voice, offline],
   );
   useEffect(() => () => buffer?.clear(), [buffer]);
   useEffect(() => {
     if (!active && buffer) {
-      const opening = narrationSentences(rehearsalText)[0]?.segment.trim();
+      const opening = narrationSentences(
+        rehearsalText,
+        language,
+      )[0]?.segment.trim();
       buffer.keep(opening ? [opening] : []);
     }
-  }, [active, buffer, rehearsalText]);
+  }, [active, buffer, rehearsalText, language]);
   const callbacks = useRef(options);
   const player = useRef<ReturnType<typeof createPageNarration> | null>(null);
   const [metrics, setMetrics] = useState<SpeechMetrics>({});
-  useEffect(() => {
+  useLayoutEffect(() => {
     callbacks.current = options;
   });
-  useEffect(() => {
+  useLayoutEffect(() => {
     setMetrics({});
     if (!active || !connection || !buffer) return;
     const narration = createPageNarration(
@@ -64,15 +78,23 @@ export function usePageNarration(options: NarrationOptions) {
         connection,
         text,
         voice,
+        language,
         recordingOutput,
         onMetrics: (value) => {
+          if (player.current !== narration) return;
           setMetrics(value);
           if (value.firstPlaybackMs !== undefined)
             callbacks.current.onPlayback();
         },
-        onProgress: (value) => callbacks.current.onProgress(value),
-        onEnd: () => callbacks.current.onEnd(),
-        onError: (error) => callbacks.current.onError(error),
+        onProgress: (value) => {
+          if (player.current === narration) callbacks.current.onProgress(value);
+        },
+        onEnd: () => {
+          if (player.current === narration) callbacks.current.onEnd();
+        },
+        onError: (error) => {
+          if (player.current === narration) callbacks.current.onError(error);
+        },
       },
       buffer,
       nextPageText,
@@ -87,23 +109,27 @@ export function usePageNarration(options: NarrationOptions) {
     page,
     connection,
     text,
-    nextPageText,
     voice,
+    language,
     recordingOutput,
     usage,
     buffer,
   ]);
-  useEffect(() => {
-    if (playing) player.current?.play();
+  useLayoutEffect(() => {
+    player.current?.setNextPageText(nextPageText);
+  }, [nextPageText]);
+  useLayoutEffect(() => {
+    if (playing && ready) player.current?.play();
     else player.current?.pause();
   }, [
     active,
     playing,
+    ready,
     page,
     connection,
     text,
-    nextPageText,
     voice,
+    language,
     recordingOutput,
     usage,
     buffer,
@@ -120,8 +146,9 @@ export function usePageNarration(options: NarrationOptions) {
     remainingText: () => player.current?.remainingText() ?? text,
     stop: (upcoming = "") => {
       player.current?.stop();
+      player.current = null;
       buffer?.retain(
-        narrationSentences(upcoming)
+        narrationSentences(upcoming, language)
           .slice(0, 2)
           .map((s) => s.segment.trim()),
       );

@@ -10,6 +10,7 @@ import { protocolFor, protocolsFor } from "../domain/modelProtocol";
 import { FileDropzone } from "./FileDropzone";
 import { VoiceField } from "./VoiceField";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import {
   NativeSelect,
@@ -19,12 +20,13 @@ import { useEffect, useRef, useState } from "react";
 import { Play, Sparkles, Volume2 } from "lucide-react";
 import { completeText, transcribeAudio } from "../infrastructure/desktop";
 import {
-  SCRIPT_CHARS_PER_MINUTE,
-  scriptLength,
-  scriptMessages,
-  scriptWeights,
-} from "../domain/prompts";
+  generateScripts,
+  resumePage,
+  type ScriptCheckpoint,
+  type ScriptGenerationProgress,
+} from "../infrastructure/scriptGeneration";
 import type { Connection, Material, Slide } from "../domain/workspace";
+import { languageProfile, type ProjectLanguage } from "../domain/language";
 
 type ScriptProps = {
   connection?: Connection;
@@ -36,78 +38,67 @@ type ScriptProps = {
   tone: string;
   notes: string;
   materials: Material[];
+  language?: ProjectLanguage;
+  checkpoint?: ScriptCheckpoint;
+  onCheckpoint: (scripts: string[], checkpoint?: ScriptCheckpoint) => void;
   onGenerated: (scripts: string[]) => void;
 };
 export function NativeScriptGenerator(props: ScriptProps) {
   const [busy, setBusy] = useState(false);
-  const [completed, setCompleted] = useState(0);
+  const [progress, setProgress] = useState<ScriptGenerationProgress | null>(
+    null,
+  );
   const [error, setError] = useState("");
-  const alive = useRef(true);
+  const [waitingSeconds, setWaitingSeconds] = useState(0);
+  const request = useRef<AbortController | null>(null);
   useEffect(
     () => () => {
-      alive.current = false;
+      request.current?.abort();
+      request.current = null;
     },
     [],
   );
-  async function generate() {
-    if (!props.connection) {
-      setError("请先在全局模型服务中选择讲稿模型");
-      return;
-    }
-    const connection = props.connection;
-    const scripts = props.slides.map((slide) => slide.script);
-    const weights = scriptWeights(props.slides);
-    const total = props.minutes * SCRIPT_CHARS_PER_MINUTE;
-    const pages = props.all
-      ? props.slides.map((_, index) => index)
-      : [props.page];
-    let remaining = total;
-    let remainingWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  useEffect(() => {
+    setWaitingSeconds(0);
+    if (!busy) return;
+    const started = Date.now();
+    const timer = window.setInterval(
+      () => setWaitingSeconds(Math.floor((Date.now() - started) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [busy, progress?.page, progress?.phase, progress?.attempt]);
+  const saved = resumePage(props, props.checkpoint);
+  const total = props.all ? props.slides.length : 1;
+  const completed = progress?.completed ?? saved;
+  async function generate(restart = false) {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
     setBusy(true);
-    setCompleted(0);
+    setProgress(null);
     setError("");
     try {
-      for (const page of pages) {
-        const target = Math.max(
-          1,
-          Math.round((remaining * weights[page]) / remainingWeight),
-        );
-        const messages = scriptMessages({
-          ...props,
-          page,
-          target,
-          previous: scripts[page - 1],
-        });
-        let script = (await completeText(connection, messages)).trim();
-        if (!alive.current) return;
-        if (!script) throw new Error(`第 ${page + 1} 页没有生成讲稿`);
-        const deviation = (value: string) =>
-          Math.abs(scriptLength(value) - target);
-        if (deviation(script) > Math.max(35, target * 0.25)) {
-          const revised = (
-            await completeText(connection, [
-              ...messages,
-              { role: "assistant", content: script },
-              {
-                role: "user",
-                content: `请调整这段讲稿至约 ${target} 字。保留上下文衔接和已核实事实，仅输出修改后的正文。`,
-              },
-            ])
-          ).trim();
-          if (!alive.current) return;
-          if (revised && deviation(revised) < deviation(script))
-            script = revised;
-        }
-        scripts[page] = script;
-        remaining -= scriptLength(script);
-        remainingWeight -= weights[page];
-        setCompleted((count) => count + 1);
-      }
-      props.onGenerated(scripts);
+      const scripts = await generateScripts(props, {
+        complete: completeText,
+        signal: controller.signal,
+        checkpoint: restart ? undefined : props.checkpoint,
+        onProgress: setProgress,
+        onCheckpoint: props.onCheckpoint,
+      });
+      if (!controller.signal.aborted) props.onGenerated(scripts);
     } catch (e) {
-      if (alive.current) setError(String(e));
+      if (request.current === controller)
+        setError(
+          controller.signal.aborted
+            ? "已暂停，已完成的页面已保存，可从当前进度继续。"
+            : `${String(e)}。已完成的页面已保存，可从当前进度重试。`,
+        );
     } finally {
-      if (alive.current) setBusy(false);
+      if (request.current === controller) {
+        request.current = null;
+        setBusy(false);
+      }
     }
   }
   return (
@@ -119,14 +110,29 @@ export function NativeScriptGenerator(props: ScriptProps) {
       <div className="dialog-body">
         <p className="muted">
           {props.all
-            ? "按整场提纲和项目时长逐页生成。全部完成后替换现有讲稿。"
+            ? "按整场提纲和项目时长逐页生成，每完成一页即保存。失败自动重试，关闭后也可继续。"
             : "参考全场提纲及前页讲稿生成，完成后替换当前页讲稿。"}
         </p>
         <div className="notice">
           {props.all
-            ? `共 ${props.slides.length} 页 · 目标 ${props.minutes} 分钟`
-            : props.slides[props.page].title}
+            ? `共 ${props.slides.length} 页 · ${languageProfile(props.language).label} · 目标 ${props.minutes} 分钟`
+            : `${props.slides[props.page].title} · ${languageProfile(props.language).label}`}
         </div>
+        {(busy || completed > 0) && (
+          <>
+            <Progress
+              value={(100 * completed) / total}
+              aria-label="讲稿生成进度"
+            />
+            <p className="muted" role="status" aria-live="polite">
+              已完成 {completed} / {total} 页
+              {busy &&
+                progress &&
+                ` · 第 ${progress.page + 1} 页${progress.phase === "retrying" ? "等待重试" : progress.phase === "revising" ? "调整长度" : "生成中"}${progress.attempt > 1 ? `（第 ${progress.attempt} 次尝试）` : ""}`}
+              {busy && ` · 已等待 ${waitingSeconds} 秒`}
+            </p>
+          </>
+        )}
         {error && (
           <p role="alert" className="action-error">
             {error}
@@ -140,11 +146,34 @@ export function NativeScriptGenerator(props: ScriptProps) {
         onClick={() => void generate()}
       >
         {busy
-          ? `生成中… ${completed} / ${props.all ? props.slides.length : 1}`
-          : props.all
-            ? "生成全部讲稿"
-            : "生成当前页讲稿"}
+          ? `生成中… ${completed} / ${total}`
+          : saved > 0
+            ? `从第 ${saved + 1} 页继续${error ? "重试" : "生成"}`
+            : error
+              ? "重试生成"
+              : props.all
+                ? "生成全部讲稿"
+                : "生成当前页讲稿"}
       </Button>
+      {busy ? (
+        <Button
+          variant="outline"
+          className="secondary full"
+          onClick={() => request.current?.abort()}
+        >
+          暂停生成
+        </Button>
+      ) : (
+        saved > 0 && (
+          <Button
+            variant="outline"
+            className="secondary full"
+            onClick={() => void generate(true)}
+          >
+            从第一页重新生成
+          </Button>
+        )
+      )}
     </>
   );
 }
@@ -154,11 +183,13 @@ export function NativeSpeechPreview({
   text,
   initialVoice,
   verifyScript,
+  language,
 }: {
   connection?: Connection;
   text: string;
   initialVoice?: string;
   verifyScript?: boolean;
+  language?: ProjectLanguage;
 }) {
   const [voice, setVoice] = useState(initialVoice ?? connection?.voice ?? "");
   const [speed, setSpeed] = useState("1");
@@ -195,6 +226,7 @@ export function NativeSpeechPreview({
       const options: SpeechOptions = {
         connection,
         text,
+        language,
         voice,
         rate: Number(speed),
         onMetrics: setMetrics,

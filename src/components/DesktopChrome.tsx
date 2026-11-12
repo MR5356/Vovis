@@ -2,7 +2,7 @@ import { isDesktop } from "../infrastructure/desktop";
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
-import { toast } from "sonner";
+import { notify } from "../infrastructure/notifications";
 
 function WindowControls() {
   const [maximized, setMaximized] = useState(false);
@@ -42,7 +42,7 @@ function WindowControls() {
     } catch (error) {
       console.error("窗口操作失败", error);
       setError("窗口操作失败，请重试");
-      toast.error("窗口操作失败，请重试");
+      notify("窗口操作失败，请重试", "error");
     }
   }
 

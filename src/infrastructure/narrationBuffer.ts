@@ -1,6 +1,10 @@
 import type { SessionUsage } from "../domain/sessionUsage";
 import type { Connection } from "../domain/workspace";
 import { streamSpeech, type SpeechEvent } from "./desktop";
+import {
+  localPreparedSpeech,
+  type OfflineNarrationSource,
+} from "./preparedNarration";
 
 function prepareSpeech(
   connection: Connection,
@@ -52,7 +56,30 @@ function prepareSpeech(
 }
 export type PreparedSpeech = ReturnType<typeof prepareSpeech>;
 
-export function createNarrationBuffer(connection: Connection, voice: string) {
+export interface NarrationBuffer {
+  keep: (texts: string[], usage?: SessionUsage) => void;
+  retain: (texts: string[]) => void;
+  take: (text: string) => PreparedSpeech | undefined;
+  clear: () => void;
+  sentences?: (
+    text: string,
+  ) => { index: number; segment: string }[] | undefined;
+}
+
+export function createNarrationBuffer(
+  connection: Connection,
+  voice: string,
+  offline?: OfflineNarrationSource,
+): NarrationBuffer {
+  if (offline)
+    return {
+      keep: (_texts: string[], _usage?: SessionUsage) => {},
+      retain: (_texts: string[]) => {},
+      take: (text: string): PreparedSpeech =>
+        localPreparedSpeech(offline, text),
+      sentences: (text: string) => offline.sentences.get(text),
+      clear: () => {},
+    };
   const queued = new Map<string, PreparedSpeech>();
   function retain(texts: string[]) {
     for (const [text, request] of queued) {
@@ -80,4 +107,3 @@ export function createNarrationBuffer(connection: Connection, voice: string) {
     clear: () => keep([]),
   };
 }
-export type NarrationBuffer = ReturnType<typeof createNarrationBuffer>;

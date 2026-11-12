@@ -3,6 +3,8 @@ import { protocolFor } from "./modelProtocol";
 import { defaults } from "./example";
 import { z } from "zod";
 import type { ComponentType } from "react";
+import { DEFAULT_LANGUAGE, projectLanguageCodes } from "./language";
+import { preparedNarrationManifestSchema } from "./preparedNarration";
 
 export const slideSchema = z.object({
   title: z.string(),
@@ -76,11 +78,20 @@ export const projectContentSchema = z
     title: z.string(),
     audience: z.string(),
     minutes: z.number().positive().finite(),
+    language: z.enum(projectLanguageCodes).default(DEFAULT_LANGUAGE),
     tone: z.string(),
+    narrationVoice: z.string().optional(),
     slides: z.array(slideSchema).min(1),
     page: z.number().int().nonnegative(),
     notes: z.string(),
     confirmed: z.boolean().optional(),
+    preparedNarration: preparedNarrationManifestSchema.optional(),
+    scriptGeneration: z
+      .object({
+        sourceKey: z.string(),
+        nextPage: z.number().int().nonnegative(),
+      })
+      .optional(),
   })
   .refine((p) => p.page < p.slides.length, { message: "当前页超出项目页数" });
 export type ProjectContent = z.infer<typeof projectContentSchema>;
@@ -92,6 +103,7 @@ export const projectSchema = z.object({
   id: z.string(),
   data: projectContentSchema,
   updatedAt: z.string(),
+  lastUsedAt: z.string().optional(),
   archived: z.boolean(),
 });
 export type Project = z.infer<typeof projectSchema>;
@@ -118,6 +130,7 @@ export const sessionSchema = z.object({
   projectId: z.string(),
   title: z.string(),
   startedAt: z.string(),
+  language: z.enum(projectLanguageCodes).default(DEFAULT_LANGUAGE),
   duration: z.number().nonnegative().finite(),
   events: z.array(timelineEventSchema),
   slides: z.array(slideSchema).min(1),

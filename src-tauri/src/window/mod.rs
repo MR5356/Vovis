@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub const MAIN_LABEL: &str = "main";
 pub const PRESENTATION_LABEL: &str = "presentation";
@@ -12,8 +12,9 @@ pub fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .min_inner_size(1000.0, 680.0)
         .center()
         .transparent(false)
-        // Windows adds a white border to undecorated windows when shadow is enabled.
-        .shadow(!cfg!(target_os = "windows"))
+        // Keep the native DWM frame: it supplies shadows and Windows 11 rounding,
+        // and automatically removes rounding while maximized or snapped.
+        .shadow(true)
         .visible(false);
     let window = platform_controls(builder)?.build()?;
     let app = app.clone();
@@ -46,7 +47,7 @@ pub fn open_presentation(app: &AppHandle) -> tauri::Result<()> {
         window.set_focus()?;
         return Ok(());
     }
-    WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         PRESENTATION_LABEL,
         WebviewUrl::App("index.html?view=presentation".into()),
@@ -54,5 +55,15 @@ pub fn open_presentation(app: &AppHandle) -> tauri::Result<()> {
     .title("Vovis · 演示窗口")
     .inner_size(1280.0, 720.0)
     .build()?;
+    let app = app.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            let _ = app.emit_to(
+                MAIN_LABEL,
+                "presentation:status",
+                serde_json::json!({ "state": "closed" }),
+            );
+        }
+    });
     Ok(())
 }

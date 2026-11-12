@@ -1,11 +1,20 @@
 import { playSpeech, type SpeechOptions } from "./speechPlayer";
 import type { NarrationBuffer } from "./narrationBuffer";
+import { DEFAULT_LANGUAGE, type ProjectLanguage } from "../domain/language";
 
-const segmenter = new Intl.Segmenter("zh", { granularity: "sentence" });
+const segmenters = new Map<ProjectLanguage, Intl.Segmenter>();
 const listMarker = /^\s*(?:[-*•]|\d+[.)、]|[一二三四五六七八九十]+、)/u;
 
 // Use ICU sentence boundaries, keeping layout wraps, list numbers and titles with their text.
-export function narrationSentences(text: string) {
+export function narrationSentences(
+  text: string,
+  language: ProjectLanguage = DEFAULT_LANGUAGE,
+) {
+  let segmenter = segmenters.get(language);
+  if (!segmenter) {
+    segmenter = new Intl.Segmenter(language, { granularity: "sentence" });
+    segmenters.set(language, segmenter);
+  }
   const sentences: { index: number; segment: string }[] = [];
   let start = 0;
   for (const { index, segment } of segmenter.segment(text)) {
@@ -33,21 +42,37 @@ export function createPageNarration(
   buffer: NarrationBuffer,
   nextPageText: string,
 ) {
-  const sentences = narrationSentences(options.text);
-  const followingPage = narrationSentences(nextPageText)
+  const segments = (text: string) =>
+    buffer.sentences?.(text) ?? narrationSentences(text, options.language);
+  const sentences = segments(options.text);
+  let followingPage = segments(nextPageText)
     .slice(0, 2)
     .map((s) => s.segment.trim());
   let index = 0;
   let current: ReturnType<typeof playSpeech> | null = null;
+  let generation = 0;
+  let stopped = false;
+  let paused = true;
+  let ended = false;
 
   function play() {
+    if (stopped) return;
+    paused = false;
     const sentence = sentences[index];
-    if (!sentence) return;
+    if (!sentence) {
+      if (!ended && sentences.length) {
+        ended = true;
+        options.onEnd();
+      }
+      return;
+    }
     if (current) {
       current.resume();
       return;
     }
     const text = sentence.segment.trim();
+    const attempt = ++generation;
+    const isCurrent = () => !stopped && attempt === generation;
     options.onProgress?.(
       Math.floor((100 * sentence.index) / options.text.length),
     );
@@ -57,7 +82,14 @@ export function createPageNarration(
         text,
         verifyScript: true,
         prepared: buffer.take(text),
+        onMetrics: (metrics) => {
+          if (isCurrent()) options.onMetrics?.(metrics);
+        },
+        onAudioReady: () => {
+          if (isCurrent()) options.onAudioReady?.();
+        },
         onProgress: (percent) => {
+          if (!isCurrent()) return;
           const offset =
             sentence.index + (sentence.segment.length * percent) / 100;
           options.onProgress?.(
@@ -65,13 +97,16 @@ export function createPageNarration(
           );
         },
         onEnd: () => {
+          if (!isCurrent()) return;
           current = null;
+          generation++;
           index++;
-          if (index === sentences.length) options.onEnd();
-          else play();
+          if (!paused) play();
         },
         onError: (message) => {
+          if (!isCurrent()) return;
           current = null;
+          generation++;
           options.onError(message);
         },
       });
@@ -88,16 +123,29 @@ export function createPageNarration(
   }
 
   function interrupt() {
+    generation++;
+    paused = true;
     current?.();
     current = null;
   }
 
   return {
     play,
-    pause: () => current?.pause(),
+    pause: () => {
+      paused = true;
+      current?.pause();
+    },
     interrupt,
     remainingText: () =>
       sentences[index] ? options.text.slice(sentences[index].index).trim() : "",
-    stop: interrupt,
+    stop: () => {
+      stopped = true;
+      interrupt();
+    },
+    setNextPageText: (text: string) => {
+      followingPage = segments(text)
+        .slice(0, 2)
+        .map((s) => s.segment.trim());
+    },
   };
 }

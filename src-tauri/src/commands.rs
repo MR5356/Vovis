@@ -91,7 +91,7 @@ pub(crate) fn update_presentation(
     app: AppHandle,
     state: State<'_, Presentation>,
     payload: Value,
-) -> AppResult<()> {
+) -> AppResult<bool> {
     main_only(&window)?;
     if serde_json::to_vec(&payload)?.len() > 4 * 1024 * 1024 {
         return Err(AppError::Invalid("演示内容过大".into()));
@@ -99,8 +99,9 @@ pub(crate) fn update_presentation(
     *state.0.lock().map_err(|_| AppError::Poisoned)? = Some(payload.clone());
     if let Some(window) = app.get_webview_window(window::PRESENTATION_LABEL) {
         window.emit("presentation:update", payload)?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 #[tauri::command]
 pub(crate) fn get_presentation(state: State<'_, Presentation>) -> AppResult<Option<Value>> {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Download } from "lucide-react";
-import { toast } from "sonner";
+import { notify } from "../infrastructure/notifications";
 import { Button } from "./ui/button";
 import type { SessionRecord } from "../storage";
 
@@ -24,9 +24,9 @@ export function SessionVideoExport({ record }: { record: SessionRecord }) {
         controller.signal,
         setProgress,
       );
-      toast(`视频已导出 · ${file}`);
+      notify(`视频已导出 · ${file}`);
     } catch (error) {
-      if (!controller.signal.aborted) toast(`导出失败 · ${String(error)}`);
+      if (!controller.signal.aborted) notify(`导出失败 · ${String(error)}`);
     } finally {
       job.current = null;
       setProgress(null);

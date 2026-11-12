@@ -1,8 +1,37 @@
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig } from "vite";
 export default defineConfig({
-  plugins: [tailwindcss()],
+  plugins: [
+    tailwindcss(),
+    {
+      name: "pdfjs-offline-resources",
+      generateBundle() {
+        const root = fileURLToPath(
+          new URL("./node_modules/pdfjs-dist/", import.meta.url),
+        );
+        for (const directory of ["cmaps", "standard_fonts", "iccs", "wasm"]) {
+          for (const entry of readdirSync(join(root, directory), {
+            withFileTypes: true,
+          })) {
+            if (entry.isFile())
+              this.emitFile({
+                type: "asset",
+                fileName: `pdfjs/${directory}/${entry.name}`,
+                source: readFileSync(join(root, directory, entry.name)),
+              });
+          }
+        }
+        this.emitFile({
+          type: "asset",
+          fileName: "pdfjs/LICENSE",
+          source: readFileSync(join(root, "LICENSE")),
+        });
+      },
+    },
+  ],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   clearScreen: false,
   server: {
@@ -29,7 +58,11 @@ export default defineConfig({
       },
       output: {
         manualChunks(id) {
-          if (id.includes("node_modules/mediabunny") || id.includes("node_modules/html2canvas-pro")) return "video-export";
+          if (
+            id.includes("node_modules/mediabunny") ||
+            id.includes("node_modules/html2canvas-pro")
+          )
+            return "video-export";
           if (id.includes("pdfjs-dist")) return "pdf";
           if (
             id.includes("/@radix-ui/") ||
@@ -38,7 +71,11 @@ export default defineConfig({
           )
             return "primitives";
           if (id.includes("node_modules/zod")) return "validation";
-          if (id.includes("react-dom/server") || id.includes("react-dom-server")) return "slide-html";
+          if (
+            id.includes("react-dom/server") ||
+            id.includes("react-dom-server")
+          )
+            return "slide-html";
           if (id.includes("node_modules")) return "vendor";
         },
       },

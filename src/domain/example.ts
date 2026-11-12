@@ -64,6 +64,7 @@ export const defaults: WorkspaceData = {
   title: "从零理解 AI Agent 架构",
   audience: "研发与技术团队",
   minutes: 25,
+  language: "zh-CN",
   tone: "自然、专业",
   slides: initialSlides,
   page: 4,
