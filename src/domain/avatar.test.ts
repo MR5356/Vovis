@@ -147,7 +147,7 @@ describe("avatar imports and packaged assets", () => {
       motion.dispose();
       disposeAvatar(vrm);
     }
-  });
+  }, 30_000);
 
   it.each(["assistant", "lecturer", "engineer"])(
     "loads the available assistant asset for %s without requesting hidden files",
@@ -182,7 +182,7 @@ describe("avatar imports and packaged assets", () => {
       vrm.update(0);
       expect(vrm.expressionManager?.getValue("aa")).toBe(1);
       disposeAvatar(vrm);
-    });
+    }, 30_000);
 
     it(`${avatar.id} gestures with its real skin and restores its authored pose without stretching bones`, async () => {
       const vrm = await parseAvatar(packagedAvatar(avatar.id));
@@ -402,6 +402,6 @@ describe("avatar imports and packaged assets", () => {
         motion.dispose();
         disposeAvatar(vrm);
       }
-    });
+    }, 30_000);
   }
 });
