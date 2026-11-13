@@ -1,3 +1,5 @@
+import { emit } from "@tauri-apps/api/event";
+import { defaultAvatarSettings } from "./domain/avatar";
 import { SessionVideoExport } from "./components/SessionVideoExport";
 import { ModelUsageSummary } from "./components/ModelUsageSummary";
 import { NewProjectDialog } from "./components/NewProjectDialog";
@@ -28,7 +30,7 @@ import {
   importProjectPackage,
   saveProjectPackage,
 } from "./infrastructure/projectArchive";
-import type { WorkspaceStore } from "./infrastructure/desktop";
+import { isDesktop, type WorkspaceStore } from "./infrastructure/desktop";
 import { useState, useEffect, useRef } from "react";
 import {
   Presentation,
@@ -231,6 +233,13 @@ export function Manager({
   const [store, setStore] = useState<LibraryState>(
     () => storage.workspace ?? seed(defaults),
   );
+  useEffect(() => {
+    const avatar = store.avatar ?? defaultAvatarSettings;
+    if (isDesktop) void emit("avatar:settings", avatar).catch(console.error);
+    const channel = new BroadcastChannel("vovis-avatar-settings");
+    channel.postMessage(avatar);
+    channel.close();
+  }, [store.avatar]);
   const initialStore = useRef(store);
   const [screen, setScreen] = useState("projects");
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -393,6 +402,7 @@ export function Manager({
         }}
         library={store.materials}
         feishuConfig={store.feishu}
+        avatarSettings={store.avatar}
         onGlobal={setScreen}
         onSave={saveData}
         onBack={() => {
@@ -642,6 +652,8 @@ export function Manager({
           />
         ) : screen === "settings" ? (
           <GlobalSettings
+            avatar={store.avatar}
+            onAvatarChange={(avatar) => setStore((s) => ({ ...s, avatar }))}
             feishu={store.feishu}
             onSave={(feishu) => setStore((s) => ({ ...s, feishu }))}
           />

@@ -1,3 +1,5 @@
+import { AvatarSettings } from "./components/AvatarSettings";
+import type { AvatarSettings as AvatarConfig } from "./domain/avatar";
 import { UpdateSettings } from "./components/AppUpdate";
 import { useFeishuLogin } from "@/hooks/useFeishuLogin";
 import { invoke } from "@tauri-apps/api/core";
@@ -695,9 +697,13 @@ function CopyableSetting({ label, value }: { label: string; value: string }) {
 }
 
 export function GlobalSettings({
+  avatar,
+  onAvatarChange,
   feishu,
   onSave,
 }: {
+  avatar?: AvatarConfig;
+  onAvatarChange: (value: AvatarConfig) => void;
   feishu?: FeishuConfig;
   onSave: (value: FeishuConfig) => void;
 }) {
@@ -803,6 +809,7 @@ export function GlobalSettings({
     !!draft.appId.trim() && (isDesktop ? hasSecret : draft.demoCredential);
   return (
     <>
+      <AvatarSettings value={avatar} onChange={onAvatarChange} />
       <Card className="card feishu-config">
         <div className="card-heading">
           <h2>

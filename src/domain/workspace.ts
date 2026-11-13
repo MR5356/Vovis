@@ -1,3 +1,4 @@
+import { avatarSettingsSchema, type AvatarSettings } from "./avatar";
 import { modelUsageSchema } from "./sessionUsage";
 import { protocolFor } from "./modelProtocol";
 import { defaults } from "./example";
@@ -149,6 +150,7 @@ export const workspaceSchema = z.object({
   connections: z.array(connectionSchema),
   bindings: bindingsSchema,
   feishu: feishuSchema.optional(),
+  avatar: avatarSettingsSchema.optional(),
 });
 export type LibraryState = z.infer<typeof workspaceSchema>;
 export type WorkspaceProps = {
@@ -162,6 +164,7 @@ export type WorkspaceProps = {
   onOpenLibrary: (material: Material) => void;
   onGlobal: (screen: "models" | "library" | "settings") => void;
   feishuConfig?: FeishuConfig;
+  avatarSettings?: AvatarSettings;
 };
 export type WorkspaceComponent = ComponentType<WorkspaceProps>;
 

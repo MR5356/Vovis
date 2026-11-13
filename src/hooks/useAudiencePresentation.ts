@@ -23,20 +23,30 @@ export function useAudiencePresentation(
   const opening = useRef<Promise<void> | null>(null);
   const failure = useRef(onError);
   failure.current = onError;
-  const { title, page, pdfAssetId, slide } = content;
+  const { title, page, pdfAssetId, slide, avatar } = content;
   const payload = useMemo<PresentationPayload>(
     () => ({
       title,
+      avatar,
       page,
       pdfAssetId,
       slide,
       reload: attempt,
       revision: crypto.randomUUID(),
     }),
-    [title, page, pdfAssetId, slide, attempt],
+    [title, page, pdfAssetId, slide, avatar, attempt],
   );
   useEffect(() => {
-    if (!isDesktop) return;
+    if (!isDesktop) {
+      localStorage.setItem(
+        "vovis-presentation-preview",
+        JSON.stringify(payload),
+      );
+      const channel = new BroadcastChannel("vovis-presentation");
+      channel.postMessage(payload);
+      channel.close();
+      return;
+    }
     const controller = new AbortController();
     const open = opening.current;
     void synchronizePresentation(

@@ -1,3 +1,6 @@
+import type { AvatarSettings } from "../domain/avatar";
+import { isDesktop } from "../infrastructure/desktop";
+import { AvatarView } from "./AvatarView";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
@@ -11,6 +14,8 @@ import type { PresentationStatus } from "../infrastructure/presentationSync";
 
 export function PresentationView() {
   const [payload, setPayload] = useState<PresentationPayload | null>(null);
+  const [avatarOverride, setAvatarOverride] = useState<AvatarSettings>();
+  const avatar = avatarOverride ?? payload?.avatar;
   const [error, setError] = useState("");
   const [pdf, setPdf] = useState<{
     assetId: string;
@@ -21,7 +26,7 @@ export function PresentationView() {
   const [pageRatio, setPageRatio] = useState<number | null>(null);
   const ratio = payload && !payload.pdfAssetId ? 16 / 9 : pageRatio;
   useEffect(() => {
-    if (!ratio) return;
+    if (!ratio || !isDesktop) return;
     let current = true;
     void fitAudienceWindow(ratio, () => current).catch((error) =>
       console.warn("演示窗口尺寸调整失败", error),
@@ -35,6 +40,19 @@ export function PresentationView() {
   useEffect(() => {
     let alive = true;
     let unlisten: (() => void) | undefined;
+    if (!isDesktop) {
+      const read = localStorage.getItem("vovis-presentation-preview");
+      if (read) {
+        try {
+          setPayload(JSON.parse(read));
+        } catch {
+          setError("演示内容无法读取，请重新打开窗口");
+        }
+      }
+      const channel = new BroadcastChannel("vovis-presentation");
+      channel.onmessage = (event) => setPayload(event.data);
+      return () => channel.close();
+    }
     void (async () => {
       const stop = await listen<PresentationPayload>(
         "presentation:update",
@@ -57,6 +75,24 @@ export function PresentationView() {
     return () => {
       alive = false;
       unlisten?.();
+    };
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    let off: (() => void) | undefined;
+    if (isDesktop)
+      void listen<AvatarSettings>("avatar:settings", (event) =>
+        setAvatarOverride(event.payload),
+      ).then((stop) => {
+        if (alive) off = stop;
+        else stop();
+      });
+    const channel = new BroadcastChannel("vovis-avatar-settings");
+    channel.onmessage = (event) => setAvatarOverride(event.data);
+    return () => {
+      alive = false;
+      off?.();
+      channel.close();
     };
   }, []);
   useEffect(() => {
@@ -96,7 +132,7 @@ export function PresentationView() {
     let frame: number | undefined;
     setError("");
     const report = (status: PresentationStatus) => {
-      if (alive)
+      if (alive && isDesktop)
         void emitTo("main", "presentation:status", status).catch(console.error);
     };
     void (async () => {
@@ -135,6 +171,14 @@ export function PresentationView() {
   }, [pdf, payload?.revision]);
   return (
     <main className="audience-window">
+      {avatar?.enabled && (
+        <div
+          className={`audience-avatar ${avatar.position}`}
+          style={{ width: `${avatar.size}%` }}
+        >
+          <AvatarView id={avatar.selected} />
+        </div>
+      )}
       {error && (
         <p role="alert" style={{ position: "absolute", zIndex: 1 }}>
           {error}

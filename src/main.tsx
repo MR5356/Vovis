@@ -57,7 +57,6 @@ import {
 } from "./components/NativeActions";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
 import {
   Presentation,
   FolderOpen,
@@ -104,7 +103,6 @@ import {
   cancelFeishuRead,
 } from "./infrastructure/desktop";
 import { SampleSlide } from "./slides";
-import { fitAudiencePopup } from "./infrastructure/presentationWindow";
 import { PdfThumbnail } from "./components/PdfThumbnail";
 import { prepareProjectPdf, saveProjectPdf } from "./infrastructure/projectPdf";
 import { Manager } from "./manager";
@@ -129,8 +127,9 @@ function App({
   onOpenLibrary,
   onGlobal,
   feishuConfig,
+  avatarSettings,
 }: WorkspaceProps) {
-  const [renderTick, setRenderTick] = useState(0);
+  const [, setRenderTick] = useState(0);
   const [data, setData] = useState(() => ({ ...defaults, ...initialData }));
   const [nav, setNav] = useState("演讲项目");
   const [stage, setStage] = useState(0);
@@ -532,12 +531,6 @@ function App({
       beginQuestions();
     }
   }, [progress]);
-  useEffect(() => {
-    if (isDesktop) return;
-    const win = present.current;
-    if (!win || win.closed) return;
-    syncPresentation(win);
-  }, [page, pdf, stage, renderTick]);
   const speechConnection = data.connections.find(
     (c) => c.id === data.bindings.tts,
   );
@@ -610,6 +603,7 @@ function App({
   const liveScript = liveSlides[page]?.script ?? slide.script;
   const audience = useAudiencePresentation(
     {
+      avatar: avatarSettings,
       title: data.title,
       slide,
       page,
@@ -1069,69 +1063,23 @@ function App({
     resumeAfter.current = null;
     setActiveAnswer("");
   }
-  function fitPopup(win: Window, ratio: number) {
-    const root = win.document.getElementById("slide");
-    if (!root || root.dataset.ratio === String(ratio)) return;
-    root.dataset.ratio = String(ratio);
-    fitAudiencePopup(win, ratio);
-    // Chrome may report the popup toolbar height only after its first resize.
-    win.setTimeout(() => {
-      if (
-        root.isConnected &&
-        root.dataset.ratio === String(ratio) &&
-        Math.abs(win.innerWidth - win.innerHeight * ratio) > 1
-      ) {
-        fitAudiencePopup(win, ratio);
-      }
-    }, 150);
-  }
-  function syncPresentation(win: Window) {
-    const root = win.document.getElementById("slide");
-    if (!root) return;
-    root.replaceChildren();
-    if (pdf) {
-      const c = win.document.createElement("canvas");
-      root.append(c);
-      pdf
-        .getPage(page + 1)
-        .then((p) => {
-          if (win.closed || !c.isConnected) return;
-          const viewport = p.getViewport({ scale: 1.5 });
-          fitPopup(win, viewport.width / viewport.height);
-          return renderPdfPage(p, c, viewport).promise;
-        })
-        .catch(() => {});
-    } else {
-      root.innerHTML = renderToStaticMarkup(
-        <SampleSlide slide={slide} page={page} deckTitle={data.title} />,
-      );
-      fitPopup(win, 16 / 9);
-    }
-  }
   function openPresentation() {
     if (isDesktop) {
       audience.open();
       return;
     }
-    const win = window.open("", "vovis-presentation", "width=1280,height=720");
+    const win = window.open(
+      "?view=presentation",
+      "vovis-presentation",
+      "width=1280,height=720",
+    );
     if (!win) {
       notify("请允许弹出窗口");
       return;
     }
-    if (win !== present.current) {
+    if (win !== present.current)
       window.addEventListener("pagehide", () => win.close(), { once: true });
-    }
     present.current = win;
-    win.document.title = "Vovis · 演示窗口";
-    win.document.body.innerHTML =
-      '<main id="slide" class="audience-window"></main>';
-    win.document.body.style.cssText =
-      "margin:0;background:#f7f6ff;color:#292b48;font-family:system-ui;display:grid;place-items:center;height:100vh;text-align:center";
-    const styles = document.querySelectorAll("style,link[rel=stylesheet]");
-    styles.forEach((style) =>
-      win.document.head.appendChild(style.cloneNode(true)),
-    );
-    syncPresentation(win);
   }
   const pending = questions.filter((q) => q.status === "pending");
   const displayQuestions = [

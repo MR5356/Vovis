@@ -42,6 +42,7 @@ CLAUDE.md
 .cursor/
 .github/copilot-instructions.md
 /docs/internal/
+/docs/avatar-design/
 /docs/architecture.md
 /docs/product.md
 /docs/ux-ui.md

@@ -1,3 +1,4 @@
+import { createAvatarMeter } from "./avatarSpeech";
 import type { SessionUsage } from "../domain/sessionUsage";
 import type { Connection } from "../domain/workspace";
 import { protocolFor, speechFormat } from "../domain/modelProtocol";
@@ -129,6 +130,7 @@ export function playSpeech(options: SpeechOptions) {
           : undefined,
       )
     : undefined;
+  const meter = createAvatarMeter(clock);
   const rate = options.rate ?? 1;
   const metrics: SpeechMetrics = {};
   const nodes = new Map<
@@ -151,6 +153,7 @@ export function playSpeech(options: SpeechOptions) {
   function stop() {
     if (stopped) return;
     stopped = true;
+    meter?.dispose();
     clock!.removeEventListener("statechange", recoverAudio);
     cancelRequest();
     if (timer !== undefined) clearInterval(timer);
@@ -209,6 +212,7 @@ export function playSpeech(options: SpeechOptions) {
     node.buffer = buffer;
     node.playbackRate.value = rate;
     node.connect(clock!.destination);
+    if (meter) node.connect(meter.input);
     if (options.recordingOutput) node.connect(options.recordingOutput);
     if (firstAt === undefined) options.onAudioReady?.();
     if (stopped) {
@@ -240,6 +244,7 @@ export function playSpeech(options: SpeechOptions) {
     resumeGeneration++;
     if (stopped || paused) return;
     paused = true;
+    meter?.reset();
     const now = clock!.currentTime;
     for (const [node, { buffer, at, offset }] of nodes) {
       const next = Math.min(

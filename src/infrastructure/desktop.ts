@@ -63,6 +63,7 @@ export async function credentialExists(id: string): Promise<boolean> {
 }
 
 export type PresentationPayload = {
+  avatar?: import("../domain/avatar").AvatarSettings;
   revision: string;
   reload?: number;
   title: string;

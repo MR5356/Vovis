@@ -76,6 +76,8 @@ export default defineConfig({
             id.includes("react-dom-server")
           )
             return "slide-html";
+          if (id.includes("/three/") || id.includes("/@pixiv/"))
+            return "avatar-engine";
           if (id.includes("node_modules")) return "vendor";
         },
       },
