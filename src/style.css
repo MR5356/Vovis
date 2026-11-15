@@ -3838,6 +3838,9 @@ html[data-runtime="desktop"] .sidebar-drag-space {
   min-width: 0;
 }
 .prepared-narration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   flex-shrink: 0;
 }
 .prepared-narration-progress-label {

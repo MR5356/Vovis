@@ -113,21 +113,29 @@ async fn saved_provider(app: AppHandle, connection_id: String) -> AppResult<prov
         let workspace = repo
             .load_workspace()?
             .ok_or_else(|| AppError::Invalid("请先保存模型连接".into()))?;
-        let config = workspace["connections"]
-            .as_array()
-            .and_then(|connections| {
-                connections
-                    .iter()
-                    .find(|item| item["id"].as_str() == Some(&connection_id))
-            })
-            .ok_or_else(|| AppError::Invalid("找不到已保存的模型连接".into()))?;
-        let config: providers::ConnectionConfig = serde_json::from_value(config.clone())?;
-        let key = repo
-            .secret(&config.id)?
-            .ok_or_else(|| AppError::Invalid("请先保存此连接的 API Key".into()))?;
-        providers::Provider::new(config, key)
+        provider_from_workspace(repo, &workspace, &connection_id)
     })
     .await
+}
+
+fn provider_from_workspace(
+    repo: &Repository,
+    workspace: &Value,
+    connection_id: &str,
+) -> AppResult<providers::Provider> {
+    let config = workspace["connections"]
+        .as_array()
+        .and_then(|connections| {
+            connections
+                .iter()
+                .find(|item| item["id"].as_str() == Some(connection_id))
+        })
+        .ok_or_else(|| AppError::Invalid("找不到已保存的模型连接".into()))?;
+    let config: providers::ConnectionConfig = serde_json::from_value(config.clone())?;
+    let key = repo
+        .secret(&config.id)?
+        .ok_or_else(|| AppError::Invalid("请先保存此连接的 API Key".into()))?;
+    providers::Provider::new(config, key)
 }
 
 #[tauri::command]
@@ -162,21 +170,67 @@ pub(crate) enum SpeechEvent {
     Done {
         first_chunk_ms: u64,
         usage: Option<providers::TokenUsage>,
+        verification: providers::SpeechVerification,
+        verification_note: Option<String>,
     },
     Error {
         message: String,
     },
 }
 
+impl SpeechEvent {
+    fn error(error: AppError) -> Self {
+        Self::Error {
+            message: error.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod speech_event_tests {
+    use super::*;
+
+    #[test]
+    fn generation_errors_have_no_review_fields() {
+        let event = SpeechEvent::error(AppError::Invalid("服务请求超时".into()));
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            serde_json::json!({
+                "kind":"error", "message":"服务请求超时"
+            })
+        );
+    }
+
+    #[test]
+    fn completion_keeps_compatibility_without_review_warnings() {
+        let event = SpeechEvent::Done {
+            first_chunk_ms: 1,
+            usage: None,
+            verification: providers::SpeechVerification::SourceOnly,
+            verification_note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            serde_json::json!({
+                "kind":"done", "firstChunkMs":1, "usage":null,
+                "verification":"source-only", "verificationNote":null
+            })
+        );
+    }
+}
+
 #[tauri::command]
+// Preserve the top-level IPC fields used by existing renderers.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn start_speech(
     window: WebviewWindow,
     connection_id: String,
     request_id: String,
-    verify_script: Option<bool>,
     text: String,
     voice: String,
     events: tauri::ipc::Channel<SpeechEvent>,
+    preparation: Option<bool>,
+    language: Option<String>,
 ) -> AppResult<()> {
     main_only(&window)?;
     let app = window.app_handle().clone();
@@ -196,23 +250,31 @@ pub(crate) fn start_speech(
             _ = cancelled => None,
             result = async {
                 let provider = saved_provider(app.clone(), connection_id).await?;
-                provider.speech(&text, &voice, verify_script.unwrap_or(false), |data| {
+                let emit = |data| {
                     events.send(SpeechEvent::Audio { data })?;
                     Ok(())
-                }).await
+                };
+                // Both modes synthesize once using the same pronunciation prompt.
+                // No ASR or language-model connection/credentials are loaded here.
+                let result = if preparation.unwrap_or(false) {
+                    provider.speech_for_preparation(&text, &voice, language.as_deref(), emit).await
+                } else {
+                    provider.speech(&text, &voice, language.as_deref(), emit).await
+                }?;
+                Ok::<_, AppError>(result)
             } => Some(result),
         };
         if let Ok(mut jobs) = app.state::<SpeechJobs>().0.lock() {
             jobs.remove(&id);
         }
         let event = match result {
-            Some(Ok((first_chunk_ms, usage))) => SpeechEvent::Done {
-                first_chunk_ms,
-                usage,
+            Some(Ok(result)) => SpeechEvent::Done {
+                first_chunk_ms: result.first_chunk_ms,
+                usage: result.usage,
+                verification: result.verification,
+                verification_note: result.verification_note,
             },
-            Some(Err(error)) => SpeechEvent::Error {
-                message: error.to_string(),
-            },
+            Some(Err(error)) => SpeechEvent::error(error),
             None => return,
         };
         let _ = events.send(event);

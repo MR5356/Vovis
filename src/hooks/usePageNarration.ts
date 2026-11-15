@@ -50,8 +50,10 @@ export function usePageNarration(options: NarrationOptions) {
   const voice = offline?.voice ?? configuredVoice;
   const buffer = useMemo(
     () =>
-      connection ? createNarrationBuffer(connection, voice, offline) : null,
-    [connection, voice, offline],
+      connection
+        ? createNarrationBuffer(connection, voice, offline, language)
+        : null,
+    [connection, voice, offline, language],
   );
   useEffect(() => () => buffer?.clear(), [buffer]);
   useEffect(() => {

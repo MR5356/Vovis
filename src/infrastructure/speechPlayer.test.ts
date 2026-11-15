@@ -73,7 +73,8 @@ it("plays before DONE, cancels queued audio, and recovers on another request", a
       sampleRate: 24000,
       channels: 1,
     },
-    text: "hello",
+    text: "I choose item 1.",
+    language: "en-US" as const,
     voice: "custom-voice",
     onAudioReady: vi.fn(),
     onEnd: vi.fn(),
@@ -104,13 +105,60 @@ it("plays before DONE, cancels queued audio, and recovers on another request", a
   expect(options.onAudioReady).toHaveBeenCalledOnce();
   playSpeech(options);
   requests[2].receive(chunk);
-  requests[2].receive({ kind: "done", firstChunkMs: 1 });
+  requests[2].receive({
+    kind: "done",
+    firstChunkMs: 1,
+    verification: "needs-review",
+    review: {
+      source: "native-transcript",
+      expected: options.text,
+      transcript: "Old transcript.",
+      note: "Old review",
+      disposition: "blocked",
+    },
+  });
   await vi.advanceTimersByTimeAsync(0);
   nodes[1].onended?.();
   expect(options.onEnd).toHaveBeenCalledOnce();
   expect(transport.stream.mock.calls.map((call) => call[2])).toEqual(
     Array(3).fill("custom-voice"),
   );
+  expect(transport.stream.mock.calls.map((call) => call[1])).toEqual(
+    Array(3).fill("I choose item 1."),
+  );
+  expect(transport.stream.mock.calls.map((call) => call[6])).toEqual(
+    Array(3).fill({ language: "en-US" }),
+  );
+  playSpeech(options);
+  requests[3].receive({
+    kind: "error",
+    message: "语音识别结果与讲稿不一致。",
+    code: "speech-verification-mismatch",
+    verification: "asr",
+    expected: "Twelve items.",
+    transcript: "Twenty items.",
+    reviewNote: "语言模型确认数量不同",
+    retryable: false,
+  });
+  expect(options.onError).toHaveBeenLastCalledWith(
+    "语音识别结果与讲稿不一致。\n复核说明：语言模型确认数量不同\n演讲稿原文：“Twelve items.”\n语音识别结果：“Twenty items.”",
+  );
+  const cancelPrepared = vi.fn();
+  playSpeech({
+    ...options,
+    prepared: {
+      failed: true,
+      cancel: cancelPrepared,
+      listen: (receive) => {
+        receive({ kind: "error", message: "需检查本句", retryable: false });
+        return cancelPrepared;
+      },
+    },
+  });
+  expect(cancelPrepared).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+  expect(requests).toHaveLength(4);
+  expect(options.onError).toHaveBeenLastCalledWith("需检查本句");
 });
 
 it("resumes at the interrupted sample and buffers incoming speech during a question", async () => {

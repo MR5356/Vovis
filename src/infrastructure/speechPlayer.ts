@@ -3,9 +3,13 @@ import type { SessionUsage } from "../domain/sessionUsage";
 import type { Connection } from "../domain/workspace";
 import { protocolFor, speechFormat } from "../domain/modelProtocol";
 import type { PreparedSpeech } from "./narrationBuffer";
-import type { ProjectLanguage } from "../domain/language";
+import { DEFAULT_LANGUAGE, type ProjectLanguage } from "../domain/language";
 import { streamSpeech, type SpeechEvent } from "./desktop";
 import { PcmStream } from "./pcmStream";
+import {
+  formatSpeechError,
+  SpeechGenerationError,
+} from "../domain/speechError";
 
 let context: AudioContext | undefined;
 const resuming = new WeakMap<AudioContext, Promise<void>>();
@@ -87,7 +91,6 @@ export interface SpeechMetrics {
 export interface SpeechOptions {
   language?: ProjectLanguage;
   prepared?: PreparedSpeech;
-  verifyScript?: boolean;
   usage?: SessionUsage;
   connection: Connection;
   text: string;
@@ -169,7 +172,7 @@ export function playSpeech(options: SpeechOptions) {
   function fail(error: unknown) {
     if (stopped) return;
     stop();
-    options.onError(String(error));
+    options.onError(formatSpeechError(error));
   }
 
   function report() {
@@ -294,7 +297,7 @@ export function playSpeech(options: SpeechOptions) {
   const receive = (event: SpeechEvent) => {
     if (stopped) return;
     if (event.kind === "error") {
-      fail(event.message);
+      fail(new SpeechGenerationError(event.message, event));
       return;
     }
     if (event.kind === "done") {
@@ -349,15 +352,11 @@ export function playSpeech(options: SpeechOptions) {
   };
   cancelRequest = options.prepared
     ? options.prepared.listen(receive, count)
-    : streamSpeech(
-        connection.id,
-        text,
-        voice,
-        receive,
-        fail,
-        count,
-        options.verifyScript,
-      );
-  timer = setInterval(report, 25);
+    : streamSpeech(connection.id, text, voice, receive, fail, count, {
+        language: options.language ?? DEFAULT_LANGUAGE,
+      });
+  // A prepared request can synchronously fail while assigning cancelRequest.
+  if (stopped) cancelRequest();
+  else timer = setInterval(report, 25);
   return Object.assign(stop, { pause, resume });
 }

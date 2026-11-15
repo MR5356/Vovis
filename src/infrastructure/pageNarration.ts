@@ -1,6 +1,7 @@
 import { playSpeech, type SpeechOptions } from "./speechPlayer";
 import type { NarrationBuffer } from "./narrationBuffer";
 import { DEFAULT_LANGUAGE, type ProjectLanguage } from "../domain/language";
+import { formatSpeechError } from "../domain/speechError";
 
 const segmenters = new Map<ProjectLanguage, Intl.Segmenter>();
 const listMarker = /^\s*(?:[-*•]|\d+[.)、]|[一二三四五六七八九十]+、)/u;
@@ -77,10 +78,9 @@ export function createPageNarration(
       Math.floor((100 * sentence.index) / options.text.length),
     );
     try {
-      current = playSpeech({
+      const candidate = playSpeech({
         ...options,
         text,
-        verifyScript: true,
         prepared: buffer.take(text),
         onMetrics: (metrics) => {
           if (isCurrent()) options.onMetrics?.(metrics);
@@ -110,6 +110,13 @@ export function createPageNarration(
           options.onError(message);
         },
       });
+      // Cached errors may arrive synchronously before playSpeech returns.
+      // Keep the cleared player clear so an explicit retry starts a new request.
+      if (!isCurrent()) {
+        candidate();
+        return;
+      }
+      current = candidate;
       buffer.keep(
         [
           ...sentences.slice(index + 1, index + 3).map((s) => s.segment.trim()),
@@ -118,7 +125,7 @@ export function createPageNarration(
         options.usage,
       );
     } catch (error) {
-      options.onError(String(error));
+      options.onError(formatSpeechError(error));
     }
   }
 

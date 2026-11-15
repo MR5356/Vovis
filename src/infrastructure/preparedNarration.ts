@@ -1,9 +1,12 @@
 import type { Connection, ProjectContent, Slide } from "../domain/workspace";
 import type { ProjectLanguage } from "../domain/language";
 import {
+  PREPARED_NARRATION_VERSION,
   preparedNarrationManifestSchema,
   preparedSpeechClipSchema,
   preparedSpeechProfileSchema,
+  hasLegacyInlinePromptProfile,
+  preparedNarrationNeedsUpdate,
   type PreparedNarrationManifest,
   type PreparedSpeechClip,
   type PreparedSpeechProfile,
@@ -17,6 +20,10 @@ import {
 import { streamSpeech, type SpeechEvent } from "./desktop";
 import { narrationSentences } from "./pageNarration";
 import { PcmStream } from "./pcmStream";
+import {
+  SpeechGenerationError,
+  speechErrorMessage,
+} from "../domain/speechError";
 
 export type { PreparedNarrationManifest } from "../domain/preparedNarration";
 const MAX_CLIP_BYTES = 16 * 1024 * 1024;
@@ -46,6 +53,7 @@ function profileFor(connection: Connection): PreparedSpeechProfile {
     streamEncoding: connection.streamEncoding,
     sampleRate: connection.sampleRate,
     channels: connection.channels,
+    generationRevision: 1,
   });
 }
 
@@ -70,7 +78,7 @@ async function clipKey(
 ) {
   const bytes = new TextEncoder().encode(
     JSON.stringify({
-      version: 1,
+      version: PREPARED_NARRATION_VERSION,
       profile: preparedSpeechProfileSchema.parse(profile),
       voice,
       language,
@@ -107,7 +115,35 @@ export async function createPreparedNarration(
     if (!clips.length) throw new Error("讲稿中没有可朗读的句子");
     pages.push({ text: slide.script, clips });
   }
-  return { version: 1, language, voice: selectedVoice, profile, pages };
+  return {
+    version: PREPARED_NARRATION_VERSION,
+    language,
+    voice: selectedVoice,
+    profile,
+    pages,
+  };
+}
+
+export function remapPreparedRetryKeys(
+  previous: PreparedNarrationManifest | undefined,
+  next: PreparedNarrationManifest,
+  keys: string[],
+) {
+  const nextClips = next.pages.flatMap((page) => page.clips);
+  const previousClips = previous?.pages.flatMap((page) => page.clips) ?? [];
+  return [
+    ...new Set(
+      keys.map((key) => {
+        if (nextClips.some((clip) => clip.key === key)) return key;
+        const original = previousClips.find((clip) => clip.key === key);
+        const replacement =
+          original && nextClips.find((clip) => clip.text === original.text);
+        if (!replacement)
+          throw new Error("待重试语音已不属于当前讲稿，请重新检查");
+        return replacement.key;
+      }),
+    ),
+  ];
 }
 
 export function preparedNarrationMatches(
@@ -118,18 +154,26 @@ export function preparedNarrationMatches(
 ) {
   return (
     !!manifest &&
+    !preparedNarrationNeedsUpdate(manifest) &&
     manifest.language === language &&
     (voice === undefined || manifest.voice === voice.trim()) &&
     manifest.pages.length === slides.length &&
-    manifest.pages.every(
-      (page, i) => page.text === slides[i].script && page.clips.length > 0,
-    )
+    manifest.pages.every((page, i) => {
+      if (page.text !== slides[i].script || !page.clips.length) return false;
+      try {
+        recordedSentences(page);
+        return true;
+      } catch {
+        return false;
+      }
+    })
   );
 }
 
 export function offlineNarrationSource(
   manifest: PreparedNarrationManifest,
 ): OfflineNarrationSource {
+  requireCurrentNarration(manifest);
   return {
     manifest,
     connection: preparedConnection(manifest),
@@ -143,6 +187,16 @@ export function offlineNarrationSource(
       manifest.pages.map((page) => [page.text, recordedSentences(page)]),
     ),
   };
+}
+
+function requireCurrentNarration(manifest: {
+  version: number;
+  profile: PreparedSpeechProfile;
+}) {
+  if (manifest.version !== PREPARED_NARRATION_VERSION)
+    throw new Error("旧版语音缓存格式已更新，请重新准备整场语音");
+  if (hasLegacyInlinePromptProfile(manifest.profile))
+    throw new Error("旧合成方式的缓存需要更新，请重新准备整场语音");
 }
 
 // Preserve the generating machine's boundaries: ICU versions may segment the same text differently.
@@ -205,6 +259,8 @@ async function parseClip(
 ) {
   if (blob.size > MAX_CLIP_BYTES) throw new Error("单句离线语音文件过大");
   const clip = preparedSpeechClipSchema.parse(JSON.parse(await blob.text()));
+  requireCurrentNarration(clip);
+  if (manifest) requireCurrentNarration(manifest);
   if (
     clip.key !== key ||
     (await clipKey(clip.profile, clip.voice, clip.language, clip.text)) !== key
@@ -234,6 +290,7 @@ export async function inspectPreparedNarration(
   manifest: PreparedNarrationManifest,
   signal?: AbortSignal,
 ) {
+  requireCurrentNarration(manifest);
   const checked = new Map<string, boolean>();
   let completed = 0;
   const clips = entries(manifest);
@@ -242,11 +299,12 @@ export async function inspectPreparedNarration(
     if (!checked.has(clip.key)) {
       try {
         const blob = await getPreparedSpeech(clip.key);
-        if (blob)
-          await validatePreparedAudio(
-            await parseClip(blob, clip.key, manifest),
-          );
-        checked.set(clip.key, !!blob);
+        if (blob) {
+          const audio = await parseClip(blob, clip.key, manifest);
+          if (audio.text !== clip.text) throw new Error("离线语音与讲稿不一致");
+          await validatePreparedAudio(audio);
+          checked.set(clip.key, true);
+        } else checked.set(clip.key, false);
       } catch {
         checked.set(clip.key, false);
       }
@@ -282,19 +340,24 @@ function collectSpeech(
       signal.removeEventListener("abort", abort);
       cancel();
       if (error) reject(error);
-      else
-        resolve({
-          version: 1,
+      else {
+        const parsed = preparedSpeechClipSchema.safeParse({
+          version: PREPARED_NARRATION_VERSION,
           ...clip,
           voice: manifest.voice,
           language: manifest.language,
           profile: manifest.profile,
           chunks,
+          verification: "source-only",
         });
+        if (parsed.success) resolve(parsed.data);
+        else reject(parsed.error);
+      }
     };
     const abort = () => finish(new DOMException("已暂停准备", "AbortError"));
     const timer = setTimeout(
       () => finish(new Error("语音准备超时，请重试")),
+      // The native TTS deadline is 120s; allow a small IPC/storage margin.
       130_000,
     );
     signal.addEventListener("abort", abort, { once: true });
@@ -304,9 +367,11 @@ function collectSpeech(
       manifest.voice,
       (event) => {
         if (settled) return;
-        if (event.kind === "error") finish(new Error(event.message));
-        else if (event.kind === "done") finish();
-        else {
+        if (event.kind === "error")
+          finish(new SpeechGenerationError(event.message, event));
+        else if (event.kind === "done") {
+          finish();
+        } else {
           bytes += event.data.length;
           if (bytes > MAX_CLIP_BYTES || chunks.length >= 8192)
             finish(new Error("单句语音过大，请缩短讲稿句子"));
@@ -315,7 +380,7 @@ function collectSpeech(
       },
       finish,
       undefined,
-      true,
+      { preparation: true, language: manifest.language },
     );
     if (settled) cancel();
   });
@@ -343,14 +408,28 @@ export async function prepareNarration(
     signal: AbortSignal;
     onProgress: (progress: PreparedNarrationProgress) => void;
     retryDelayMs?: number;
+    regenerate?: boolean;
+    retryKeys?: string[];
   },
 ) {
-  if (
-    JSON.stringify(profileFor(connection)) !== JSON.stringify(manifest.profile)
-  )
+  requireCurrentNarration(manifest);
+  // A missing revision is compatible for unaffected historical providers.
+  // requireCurrentNarration already excludes the affected legacy profiles.
+  const { generationRevision: _currentRevision, ...currentProfile } =
+    profileFor(connection);
+  const { generationRevision: _storedRevision, ...storedProfile } =
+    manifest.profile;
+  if (JSON.stringify(currentProfile) !== JSON.stringify(storedProfile))
     throw new Error("语音配置已改变，请按当前设置重新准备");
   const clips = entries(manifest);
+  const retryKeys = options.retryKeys ? new Set(options.retryKeys) : undefined;
+  if (
+    retryKeys &&
+    [...retryKeys].some((key) => !clips.some((clip) => clip.key === key))
+  )
+    throw new Error("待重试语音与当前讲稿不一致，请重新检查");
   let completed = 0;
+  const refreshed = new Set<string>();
   for (const clip of clips) {
     const report = (phase: PreparedNarrationProgress["phase"], attempt = 1) =>
       options.onProgress({
@@ -368,12 +447,17 @@ export async function prepareNarration(
     try {
       const blob = await getPreparedSpeech(clip.key);
       if (blob) {
-        await validatePreparedAudio(await parseClip(blob, clip.key, manifest));
-        existing = true;
+        const audio = await parseClip(blob, clip.key, manifest);
+        await validatePreparedAudio(audio);
+        if (audio.text !== clip.text) throw new Error("离线语音与讲稿不一致");
+        existing =
+          refreshed.has(clip.key) ||
+          (!options.regenerate && !retryKeys?.has(clip.key));
       }
     } catch {
       /* Regenerate a missing or corrupt sentence. */
     }
+    if (!existing && retryKeys && !retryKeys.has(clip.key)) continue;
     if (!existing) {
       for (let attempt = 1; ; attempt++) {
         report("generating", attempt);
@@ -394,16 +478,24 @@ export async function prepareNarration(
           if (blob.size > MAX_CLIP_BYTES)
             throw new Error("单句离线语音文件过大，请缩短讲稿句子");
           await putPreparedSpeech(clip.key, blob);
+          refreshed.add(clip.key);
           break;
         } catch (error) {
+          if (options.signal.aborted) throw error;
+          const details =
+            error instanceof SpeechGenerationError ? error.details : {};
           if (
-            options.signal.aborted ||
+            details.retryable === false ||
             attempt >= 3 ||
             /HTTP (?:400|401|403|404|405|413|415|422)\b|无权|鉴权|请先|请配置|过大|可用空间|QuotaExceededError/u.test(
               String(error),
             )
           )
-            throw error;
+            throw new SpeechGenerationError(speechErrorMessage(error), {
+              ...details,
+              page: clip.page,
+              sentence: clip.sentence,
+            });
           report("retrying", attempt + 1);
           await delay(
             (options.retryDelayMs ?? 1000) * 2 ** (attempt - 1),
@@ -439,13 +531,23 @@ export function localPreparedSpeech(
         const clip = await parseClip(blob, key, source.manifest);
         if (clip.text !== text)
           throw new Error("离线语音与当前讲稿不一致，请重新准备");
+        await validatePreparedAudio(clip);
         for (const data of clip.chunks) {
           if (cancelled) return;
           receive({ kind: "audio", data });
         }
-        if (!cancelled) receive({ kind: "done", firstChunkMs: 0 });
+        if (!cancelled)
+          receive({
+            kind: "done",
+            firstChunkMs: 0,
+          });
       })().catch((error) => {
-        if (!cancelled) receive({ kind: "error", message: String(error) });
+        if (!cancelled)
+          receive({
+            kind: "error",
+            message: speechErrorMessage(error),
+            ...(error instanceof SpeechGenerationError ? error.details : {}),
+          });
       });
       return cancel;
     },
@@ -457,13 +559,17 @@ export async function exportProjectAudio(
 ) {
   const manifest = data.preparedNarration;
   if (!manifest) return undefined;
+  requireCurrentNarration(manifest);
   const assets = new Map<string, Blob>();
   for (const { key } of entries(manifest)) {
     if (assets.has(key)) continue;
     const blob = await getPreparedSpeech(key);
     if (blob) {
-      await parseClip(blob, key, manifest);
-      assets.set(key, blob);
+      const clip = await parseClip(blob, key, manifest);
+      assets.set(
+        key,
+        new Blob([JSON.stringify(clip)], { type: "application/json" }),
+      );
     }
   }
   return { manifest, assets };
@@ -476,6 +582,7 @@ export async function validateProjectAudio(
   language: ProjectLanguage,
 ) {
   const manifest = preparedNarrationManifestSchema.parse(manifestInput);
+  requireCurrentNarration(manifest);
   if (!preparedNarrationMatches(manifest, slides, language))
     throw new Error("离线语音与项目讲稿或语言不一致");
   const expected = new Map<string, string>();

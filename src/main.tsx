@@ -2384,7 +2384,7 @@ function App({
                 connection={data.connections.find(
                   (c) => c.id === data.bindings.tts,
                 )}
-                verifyScript
+                bySentence
                 text={slide.script}
                 initialVoice={narrationVoice}
               />

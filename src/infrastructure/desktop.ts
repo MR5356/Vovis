@@ -1,3 +1,4 @@
+import type { ProjectLanguage } from "../domain/language";
 import { fileSelectionError } from "../domain/fileSelection";
 import type { SessionUsage, TokenUsage } from "../domain/sessionUsage";
 import { parseWorkspace } from "../domain/workspace";
@@ -95,8 +96,15 @@ export async function completeText(
 
 export type SpeechEvent =
   | { kind: "audio"; data: string }
-  | { kind: "done"; firstChunkMs: number; usage?: TokenUsage | null }
-  | { kind: "error"; message: string };
+  | ({
+      kind: "done";
+      firstChunkMs: number;
+      usage?: TokenUsage | null;
+    } & Partial<import("../domain/preparedNarration").SpeechVerification>)
+  | ({
+      kind: "error";
+      message: string;
+    } & import("../domain/speechError").SpeechFailureDetails);
 
 export function streamSpeech(
   connectionId: string,
@@ -105,7 +113,7 @@ export function streamSpeech(
   receive: (event: SpeechEvent) => void,
   fail: (error: unknown) => void,
   onSubmit?: () => void,
-  verifyScript = false,
+  options?: { preparation?: boolean; language?: ProjectLanguage },
 ) {
   const requestId = crypto.randomUUID();
   const events = new Channel<SpeechEvent>();
@@ -124,10 +132,11 @@ export function streamSpeech(
     await invoke("start_speech", {
       connectionId,
       requestId,
-      verifyScript,
       text,
       voice,
       events,
+      preparation: options?.preparation ?? false,
+      language: options?.language,
     });
     started = true;
     if (cancelled) cancelNative();

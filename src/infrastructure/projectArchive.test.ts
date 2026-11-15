@@ -42,7 +42,7 @@ const material = {
   updatedAt: "today",
 };
 const manifest: PreparedNarrationManifest = {
-  version: 1,
+  version: 2,
   language: "en-US",
   voice: "speaker",
   profile: { model: "tts", protocol: "audio-speech", audioFormat: "mp3" },
@@ -97,6 +97,44 @@ async function alterIndex(file: Blob, change: (index: any) => void) {
 }
 
 describe("portable project packages", () => {
+  it("imports legacy projects without reusing unverified audio", async () => {
+    const { file } = await createProjectPackage(project, [material]);
+    const legacy = await alterIndex(file, (index) => {
+      index.project.preparedNarration.version = 1;
+    });
+    const onProgress = vi.fn();
+    const imported = await readProjectPackage(legacy, onProgress);
+    expect(imported.data.slides).toEqual(project.data.slides);
+    expect(imported.materials).toEqual([material]);
+    expect(await imported.pdf!.text()).toBe(await pdf.text());
+    expect(imported.data.preparedNarration).toBeUndefined();
+    expect(imported.audioAssets.size).toBe(0);
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.stringContaining("旧版语音需重新准备"),
+    );
+  });
+
+  it("imports an affected legacy synthesis package without reinstalling its audio", async () => {
+    const { file } = await createProjectPackage(project, [material]);
+    const legacy = await alterIndex(file, (index) => {
+      index.project.preparedNarration.profile.model =
+        "FunAudioLLM/CosyVoice2-0.5B";
+      delete index.project.preparedNarration.profile.generationRevision;
+    });
+    mocks.validateAudio.mockClear();
+    const onProgress = vi.fn();
+    const imported = await readProjectPackage(legacy, onProgress);
+    expect(imported.data.slides).toEqual(project.data.slides);
+    expect(imported.materials).toEqual([material]);
+    expect(await imported.pdf!.text()).toBe(await pdf.text());
+    expect(imported.data.preparedNarration).toBeUndefined();
+    expect(imported.audioAssets.size).toBe(0);
+    expect(mocks.validateAudio).not.toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.stringContaining("旧合成方式的缓存需要更新"),
+    );
+  });
+
   it("round trips PDF, language, narration and all referenced materials without account configuration", async () => {
     const source = structuredClone(project);
     Object.assign(source.data, {

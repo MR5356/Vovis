@@ -78,6 +78,7 @@ it("cancels a registered speech request even if stop precedes IPC acknowledgemen
   const stop = streamSpeech("voice", "test", "alias", receive, vi.fn());
   await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledOnce());
   const payload = mocks.invoke.mock.calls[0][1];
+  expect(payload.preparation).toBe(false);
   stop();
   payload.events.onmessage({ kind: "audio", data: "AAAA" });
   expect(receive).not.toHaveBeenCalled();
@@ -88,3 +89,34 @@ it("cancels a registered speech request even if stop precedes IPC acknowledgemen
     }),
   );
 });
+
+it.each([false, true])(
+  "passes original text and language for preparation=%s",
+  async (preparation) => {
+    mocks.invoke.mockResolvedValue(undefined);
+    const { streamSpeech } = await import("./desktop");
+    const stop = streamSpeech(
+      "voice",
+      "I use 1 item in Chapter I, not AI.",
+      "alias",
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      {
+        preparation,
+        language: "en-US",
+      },
+    );
+    await vi.waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "start_speech",
+        expect.objectContaining({
+          preparation,
+          language: "en-US",
+          text: "I use 1 item in Chapter I, not AI.",
+        }),
+      ),
+    );
+    stop();
+  },
+);

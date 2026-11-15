@@ -1,4 +1,10 @@
-import { Download, Pause, CheckCircle2, AudioLines } from "lucide-react";
+import {
+  Download,
+  Pause,
+  CheckCircle2,
+  AudioLines,
+  RefreshCw,
+} from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Progress } from "./ui/progress";
@@ -9,19 +15,21 @@ export function PreparedNarrationPanel({
 }: {
   preparation: PreparedNarrationState;
 }) {
-  const { ready, checking, preparing, progress, error } = preparation;
+  const { ready, outdated, checking, preparing, progress, error } = preparation;
   const percent = progress?.total
     ? Math.round((100 * progress.completed) / progress.total)
     : 0;
-  const status = ready
-    ? "已就绪"
+  const status = preparing
+    ? "准备中"
     : checking
       ? "检查中"
-      : preparing
-        ? "准备中"
+      : ready
+        ? "已准备"
         : progress?.completed
           ? "待继续"
-          : "未准备";
+          : outdated
+            ? "需重新准备"
+            : "未准备";
   return (
     <Card className="card prepared-narration">
       <div className="prepared-narration-heading">
@@ -48,12 +56,12 @@ export function PreparedNarrationPanel({
                 aria-live="polite"
               >
                 <span>
-                  已准备 <strong>{progress.completed}</strong> /{" "}
+                  已生成 <strong>{progress.completed}</strong> /{" "}
                   {progress.total} 句
                 </span>
                 <span>{percent}%</span>
               </div>
-              <Progress value={percent} aria-label="整场语音准备进度" />
+              <Progress value={percent} aria-label="整场语音生成进度" />
               {preparing && (
                 <p className="prepared-narration-step">
                   第 {progress.page + 1} 页 · 第 {progress.sentence + 1} 句 ·{" "}
@@ -87,20 +95,32 @@ export function PreparedNarrationPanel({
               暂停准备
             </Button>
           ) : (
-            <Button
-              variant={ready ? "outline" : "default"}
-              disabled={checking || ready}
-              onClick={() => void preparation.start()}
-            >
-              {ready ? <CheckCircle2 size={16} /> : <Download size={16} />}
-              {ready
-                ? "本地语音已就绪"
-                : checking
+            <>
+              <Button
+                variant={ready ? "outline" : "default"}
+                disabled={checking || ready}
+                onClick={() => void preparation.start()}
+              >
+                {ready ? <CheckCircle2 size={16} /> : <Download size={16} />}
+                {checking
                   ? "检查中…"
-                  : progress?.completed
-                    ? "继续准备剩余语音"
-                    : "准备整场语音"}
-            </Button>
+                  : ready
+                    ? "本地语音已就绪"
+                    : progress?.completed
+                      ? "继续准备剩余语音"
+                      : "准备整场语音"}
+              </Button>
+              {ready && (
+                <Button
+                  variant="ghost"
+                  disabled={checking}
+                  onClick={() => void preparation.start({ regenerate: true })}
+                >
+                  <RefreshCw size={16} />
+                  重新生成
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -110,6 +130,7 @@ export function PreparedNarrationPanel({
         </p>
       )}
       <p className="prepared-narration-note">
+        {outdated && "本地语音需要更新，请重新准备。"}
         修改讲稿、语言或音色后需重新准备。现场问答仍需联网。
       </p>
     </Card>

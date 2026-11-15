@@ -199,3 +199,55 @@ it("uses recorded offline sentence boundaries instead of resegmenting on the pla
   expect(onEnd).toHaveBeenCalledOnce();
   expect(requests).toHaveLength(1);
 });
+
+it("allows an explicit retry after a prepared request fails synchronously", () => {
+  const requests: {
+    options: SpeechOptions;
+    player: ReturnType<typeof playSpeech>;
+  }[] = [];
+  vi.mocked(playSpeech).mockImplementation((options) => {
+    const player = Object.assign(vi.fn(), { pause: vi.fn(), resume: vi.fn() });
+    requests.push({ options, player });
+    if (requests.length === 1) options.onError("语音识别结果与讲稿不同");
+    return player;
+  });
+  const buffer = {
+    take: vi.fn(),
+    keep: vi.fn(),
+    clear: vi.fn(),
+    retain: vi.fn(),
+  };
+  const onError = vi.fn();
+  const narration = createPageNarration(
+    {
+      connection: {
+        id: "tts",
+        type: "TTS",
+        name: "TTS",
+        model: "test",
+        url: "",
+        vendor: "",
+      },
+      text: "第一句。第二句。",
+      voice: "voice",
+      onEnd: vi.fn(),
+      onError,
+    },
+    buffer,
+    "",
+  );
+  narration.play();
+  expect(onError).toHaveBeenCalledOnce();
+  expect(requests[0].player).toHaveBeenCalledOnce();
+  expect(buffer.keep).not.toHaveBeenCalled();
+  expect(requests).toHaveLength(1);
+  narration.play();
+  expect(requests).toHaveLength(2);
+  expect(requests.map(({ options }) => options.text)).toEqual([
+    "第一句。",
+    "第一句。",
+  ]);
+  expect(requests[0].player.resume).not.toHaveBeenCalled();
+  requests[1].options.onEnd();
+  expect(requests[2].options.text).toBe("第二句。");
+});

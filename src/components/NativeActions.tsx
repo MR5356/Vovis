@@ -182,13 +182,13 @@ export function NativeSpeechPreview({
   connection,
   text,
   initialVoice,
-  verifyScript,
+  bySentence,
   language,
 }: {
   connection?: Connection;
   text: string;
   initialVoice?: string;
-  verifyScript?: boolean;
+  bySentence?: boolean;
   language?: ProjectLanguage;
 }) {
   const [voice, setVoice] = useState(initialVoice ?? connection?.voice ?? "");
@@ -236,8 +236,13 @@ export function NativeSpeechPreview({
           setBusy(false);
         },
       };
-      if (verifyScript) {
-        const buffer = createNarrationBuffer(connection, voice);
+      if (bySentence) {
+        const buffer = createNarrationBuffer(
+          connection,
+          voice,
+          undefined,
+          language,
+        );
         const narration = createPageNarration(options, buffer, "");
         current.current = () => {
           narration.stop();

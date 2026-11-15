@@ -1,3 +1,4 @@
+import { preparedNarrationNeedsUpdate } from "../domain/preparedNarration";
 import { z } from "zod";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -215,6 +216,15 @@ export async function readProjectPackage(
   if (offset !== file.size) throw new Error("项目包长度与索引不一致");
   if (!!index.project.pdfAssetId !== !!pdf)
     throw new Error("项目包缺少 PDF 或 PDF 引用无效");
+  if (preparedNarrationNeedsUpdate(index.project.preparedNarration)) {
+    // Keep the editable project and original archive; do not install audio
+    // whose historical source identity or synthesis strategy is obsolete.
+    index.project.preparedNarration = undefined;
+    audioAssets.clear();
+    onProgress(
+      "旧版语音需重新准备：旧合成方式的缓存需要更新，讲稿和其他项目资料已保留",
+    );
+  }
   if (index.project.preparedNarration) {
     if (
       !preparedNarrationMatches(

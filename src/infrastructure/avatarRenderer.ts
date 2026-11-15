@@ -9,9 +9,21 @@ import { hasFullBodyGeometry } from "./avatarBody";
 
 export async function parseAvatar(bytes: ArrayBuffer): Promise<VRM> {
   inspectVrm(bytes);
-  const loader = new GLTFLoader();
+  // GLTFLoader catches failed texture requests and substitutes an untextured
+  // material. Treat those failures as an invalid load instead of a white avatar.
+  let resourceFailed = false;
+  const manager = new THREE.LoadingManager();
+  manager.onError = (url) => {
+    resourceFailed = true;
+    if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+  };
+  const loader = new GLTFLoader(manager);
   loader.register((parser) => new VRMLoaderPlugin(parser));
   const gltf = await loader.parseAsync(bytes, "");
+  if (resourceFailed) {
+    VRMUtils.deepDispose(gltf.scene);
+    throw new Error("模型纹理加载失败，请检查模型文件后重新加载");
+  }
   const vrm = gltf.userData.vrm as VRM | undefined;
   if (!vrm) {
     VRMUtils.deepDispose(gltf.scene);
