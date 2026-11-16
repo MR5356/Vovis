@@ -1,0 +1,92 @@
+.release-notes-markdown.wmde-markdown {
+  --color-fg-default: var(--foreground);
+  --color-fg-muted: var(--muted-foreground);
+  --color-fg-subtle: var(--muted-foreground);
+  --color-canvas-default: transparent;
+  --color-canvas-subtle: var(--muted);
+  --color-border-default: var(--border);
+  --color-border-muted: var(--border);
+  --color-accent-fg: var(--primary);
+  --color-neutral-muted: var(--secondary);
+  color: var(--foreground);
+  background: transparent;
+  font: inherit;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.release-notes-markdown.wmde-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.1em 0 0.5em;
+  padding-bottom: 0;
+  border: 0;
+  font-size: 1em;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.release-notes-markdown.wmde-markdown h1 {
+  font-size: 1.25em;
+}
+
+.release-notes-markdown.wmde-markdown h2 {
+  font-size: 1.12em;
+}
+
+.release-notes-markdown.wmde-markdown :is(p, ul, ol, blockquote, pre, table) {
+  margin: 0 0 0.8em;
+}
+
+.release-notes-markdown.wmde-markdown :is(ul, ol) {
+  padding-left: 1.55em;
+}
+
+.release-notes-markdown.wmde-markdown ul {
+  list-style: disc;
+}
+
+.release-notes-markdown.wmde-markdown ol {
+  list-style: decimal;
+}
+
+.release-notes-markdown.wmde-markdown .task-list-item {
+  list-style: none;
+}
+
+.release-notes-markdown.wmde-markdown li > :is(ul, ol) {
+  margin-bottom: 0;
+}
+
+.release-notes-markdown.wmde-markdown a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.release-notes-markdown.wmde-markdown :is(pre, table) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.release-notes-markdown.wmde-markdown pre {
+  padding: 12px;
+  border-radius: var(--radius);
+}
+
+.release-notes-markdown.wmde-markdown code {
+  font-size: 0.9em;
+}
+
+.release-notes-markdown.wmde-markdown input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--primary);
+}
+
+.release-notes-markdown.wmde-markdown > :first-child {
+  margin-top: 0;
+}
+
+.release-notes-markdown.wmde-markdown > :last-child {
+  margin-bottom: 0;
+}

@@ -11,6 +11,7 @@ import { SampleSlide } from "../slides";
 import { getPdf } from "../storage";
 import type { PresentationPayload } from "../infrastructure/desktop";
 import type { PresentationStatus } from "../infrastructure/presentationSync";
+import { waitForPresentationPaint } from "../infrastructure/presentationReadiness";
 
 export function PresentationView() {
   const [payload, setPayload] = useState<PresentationPayload | null>(null);
@@ -129,11 +130,25 @@ export function PresentationView() {
     if (!payload) return;
     let alive = true;
     let task: pdfjs.RenderTask | undefined;
-    let frame: number | undefined;
+    const controller = new AbortController();
     setError("");
     const report = (status: PresentationStatus) => {
       if (alive && isDesktop)
         void emitTo("main", "presentation:status", status).catch(console.error);
+    };
+    const reportError = (e: unknown) => {
+      if (
+        alive &&
+        !(
+          e instanceof Error &&
+          ["RenderingCancelledException", "AbortError"].includes(e.name)
+        )
+      ) {
+        const message =
+          "演示窗口页面加载失败，请点击「继续讲解」重试，或重新导入 PDF";
+        setError(message);
+        report({ state: "error", revision: payload.revision, message });
+      }
     };
     void (async () => {
       if (payload.pdfAssetId) {
@@ -149,24 +164,17 @@ export function PresentationView() {
         const viewport = page.getViewport({ scale: 2 });
         setPageRatio(viewport.width / viewport.height);
         task = renderPdfPage(page, canvas.current, viewport);
-        await task.promise;
+        // Rendering can continue when the window becomes visible again. It
+        // must not hold up the next sentence in an occluded/minimized window.
+        void task.promise.catch(reportError);
+        await waitForPresentationPaint(task.promise, controller.signal);
       }
-      if (alive)
-        frame = requestAnimationFrame(() =>
-          report({ state: "ready", revision: payload.revision }),
-        );
-    })().catch((e) => {
-      if (alive && e?.name !== "RenderingCancelledException") {
-        const message =
-          "演示窗口页面加载失败，请点击「继续讲解」重试，或重新导入 PDF";
-        setError(message);
-        report({ state: "error", revision: payload.revision, message });
-      }
-    });
+      if (alive) report({ state: "ready", revision: payload.revision });
+    })().catch(reportError);
     return () => {
       alive = false;
+      controller.abort();
       task?.cancel();
-      if (frame !== undefined) cancelAnimationFrame(frame);
     };
   }, [pdf, payload?.revision]);
   return (

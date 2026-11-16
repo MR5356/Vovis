@@ -71,7 +71,10 @@ export function createAvatarRenderer(
   const motionEnvelope = getAvatarMotionEnvelope(vrm, motionOptions, bounds);
   const motionBounds = bounds.clone().expandByVector(motionEnvelope);
   const camera = new THREE.PerspectiveCamera(27, 1, 0.01, 100);
-  const bodyMotion = createAvatarMotion(vrm, motionOptions);
+  const bodyMotion = createAvatarMotion(vrm, {
+    ...motionOptions,
+    seed: Math.floor(Math.random() * 0x100000000),
+  });
   let azimuth = 0;
   let elevation = 0;
   let previous = 0;
@@ -112,11 +115,9 @@ export function createAvatarRenderer(
         lastWidth = width;
         lastHeight = height;
       }
-      vrm.expressionManager?.setValue("aa", Math.min(1, level));
-      const phase = time % 4.7;
       vrm.expressionManager?.setValue(
-        "blink",
-        phase < 0.14 ? Math.sin((phase / 0.14) * Math.PI) : 0,
+        "aa",
+        Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : 0,
       );
       bodyMotion.update(time, level, dt);
       vrm.update(dt);

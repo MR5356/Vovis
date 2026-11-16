@@ -1,5 +1,6 @@
 import {
   availableBuiltinAvatars,
+  builtinAvatars,
   inspectVrm,
   resolveAvatarId,
 } from "../domain/avatar";
@@ -10,6 +11,31 @@ async function database() {
     request.onupgradeneeded = () => request.result.createObjectStore("models");
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
+  });
+}
+/** Deletion does not parse/load the model: missing or corrupt imports are removable. */
+export async function deleteAvatar(id: string) {
+  if (builtinAvatars.some((avatar) => avatar.id === id))
+    throw new Error("内置形象不能删除");
+  const db = await database();
+  return new Promise<void>((resolve, reject) => {
+    let tx: IDBTransaction;
+    try {
+      tx = db.transaction("models", "readwrite");
+      tx.objectStore("models").delete(id);
+    } catch (error) {
+      db.close();
+      reject(error);
+      return;
+    }
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onabort = tx.onerror = () => {
+      db.close();
+      reject(tx.error ?? new Error("形象删除失败，请重试"));
+    };
   });
 }
 export async function saveAvatar(id: string, bytes: ArrayBuffer) {

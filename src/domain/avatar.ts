@@ -25,6 +25,19 @@ export const availableBuiltinAvatars = builtinAvatars.filter(
 );
 export const DEFAULT_AVATAR_ID = "assistant";
 
+export function withoutImportedAvatar(
+  settings: AvatarSettings,
+  id: string,
+): AvatarSettings {
+  if (builtinAvatars.some((avatar) => avatar.id === id))
+    throw new Error("内置形象不能删除");
+  return {
+    ...settings,
+    imports: settings.imports.filter((avatar) => avatar.id !== id),
+    selected: settings.selected === id ? DEFAULT_AVATAR_ID : settings.selected,
+  };
+}
+
 /** Keep imported IDs intact; temporarily unavailable built-ins use the assistant. */
 export function resolveAvatarId(id: string = DEFAULT_AVATAR_ID) {
   const builtin = builtinAvatars.find((avatar) => avatar.id === id);

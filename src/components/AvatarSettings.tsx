@@ -9,6 +9,7 @@ import {
   Pause,
   Upload,
   LoaderCircle,
+  Trash2,
 } from "lucide-react";
 import {
   Dialog,
@@ -24,9 +25,11 @@ import {
   defaultAvatarSettings,
   avatarName,
   resolveAvatarId,
+  DEFAULT_AVATAR_ID,
+  withoutImportedAvatar,
   type AvatarSettings as Settings,
 } from "../domain/avatar";
-import { saveAvatar } from "../infrastructure/avatarAssets";
+import { saveAvatar, deleteAvatar } from "../infrastructure/avatarAssets";
 import {
   readAvatarFile,
   validateAvatarFile,
@@ -57,6 +60,10 @@ export function AvatarSettings({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [demo, setDemo] = useState(true);
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const [removeError, setRemoveError] = useState("");
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(
     null,
   );
@@ -108,6 +115,26 @@ export function AvatarSettings({
   const selectedBuiltin = availableBuiltinAvatars.find(
     (a) => a.id === selectedId,
   );
+  async function removeSelected() {
+    if (!removing || importBusy.current) return;
+    const { id } = removing;
+    importBusy.current = true;
+    setBusy(true);
+    setRemoveError("");
+    try {
+      await deleteAvatar(id);
+      onChange(withoutImportedAvatar(current.current, id));
+      setRemoving(null);
+      setError("");
+    } catch (error) {
+      setRemoveError(
+        `无法移除形象：${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      importBusy.current = false;
+      setBusy(false);
+    }
+  }
   const readPercent =
     importProgress?.stage === "reading" && importProgress.total
       ? Math.min(
@@ -179,6 +206,12 @@ export function AvatarSettings({
                   ))}
                 </optgroup>
               )}
+              {!selectedBuiltin &&
+                !value.imports.some((a) => a.id === selectedId) && (
+                  <NativeSelectOption value={selectedId}>
+                    未找到记录的自定义形象
+                  </NativeSelectOption>
+                )}
             </NativeSelect>
             <p className="muted">
               {selectedBuiltin?.description ?? "本地导入的 VRM 形象"}
@@ -196,6 +229,33 @@ export function AvatarSettings({
                 <Upload size={15} />
                 {busy ? "正在导入…" : "导入 VRM"}
               </Button>
+              {!selectedBuiltin && (
+                <>
+                  <Button
+                    variant="outline"
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => update({ selected: DEFAULT_AVATAR_ID })}
+                  >
+                    切换默认形象
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      setRemoveError("");
+                      setRemoving({
+                        id: selectedId,
+                        name: avatarName(selectedId, value),
+                      });
+                    }}
+                  >
+                    <Trash2 size={15} />
+                    移除此形象
+                  </Button>
+                </>
+              )}
               <Button
                 variant="outline"
                 className={demo ? "soft-primary" : "secondary"}
@@ -269,6 +329,50 @@ export function AvatarSettings({
           )}
         </div>
       </div>
+      <Dialog
+        open={!!removing}
+        onOpenChange={(open) => {
+          if (!busy && !open) setRemoving(null);
+        }}
+      >
+        <DialogContent
+          className="modal"
+          showCloseButton={!busy}
+          onEscapeKeyDown={(event) => {
+            if (busy) event.preventDefault();
+          }}
+          onInteractOutside={(event) => {
+            if (busy) event.preventDefault();
+          }}
+        >
+          <DialogTitle>移除“{removing?.name}”？</DialogTitle>
+          <DialogDescription>
+            将从形象列表移除并清理本机保存的模型。原始 VRM
+            文件不会被删除，之后可以重新导入。移除当前形象后将切换到默认科技助手。
+          </DialogDescription>
+          {removeError && (
+            <p className="action-error" role="alert">
+              {removeError}
+            </p>
+          )}
+          <div className="avatar-actions">
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => setRemoving(null)}
+            >
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void removeSelected()}
+            >
+              {busy ? "正在移除…" : "确认移除"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {importProgress && (
         <Dialog open={busy}>
           <DialogContent

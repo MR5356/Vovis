@@ -362,19 +362,82 @@ pub(crate) async fn test_feishu_credentials(
     providers::test_feishu(&app_id, &secret).await
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavedVideoFiles {
+    video_path: String,
+    subtitle_path: String,
+}
+
+fn video_export_parts(bytes: &[u8]) -> AppResult<(&[u8], &[u8])> {
+    if bytes.get(..8) != Some(b"VOVISV1\n") || bytes.len() < 12 {
+        return Err(AppError::Invalid("缺少视频或字幕导出数据".into()));
+    }
+    let size = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    if size > 4 * 1024 * 1024 || size > bytes.len() - 12 {
+        return Err(AppError::Invalid("字幕数据长度无效".into()));
+    }
+    let subtitles = &bytes[12..12 + size];
+    std::str::from_utf8(subtitles)
+        .map_err(|_| AppError::Invalid("字幕不是有效的 UTF-8 文本".into()))?;
+    let video = &bytes[12 + size..];
+    if video.get(4..8) != Some(b"ftyp") {
+        return Err(AppError::Invalid("无效的 MP4 视频".into()));
+    }
+    Ok((video, subtitles))
+}
+
+fn write_video_files(
+    directory: &std::path::Path,
+    stem: &str,
+    video: &[u8],
+    subtitles: &[u8],
+) -> AppResult<SavedVideoFiles> {
+    use std::io::Write;
+    std::fs::create_dir_all(directory)?;
+    // Stage and flush both files before exposing either final name. Existing
+    // exports are never overwritten. If the second rename fails, roll back
+    // only the new video, and report its actual path if cleanup also fails.
+    let mut video_temp = tempfile::NamedTempFile::new_in(directory)?;
+    let mut subtitle_temp = tempfile::NamedTempFile::new_in(directory)?;
+    video_temp.write_all(video)?;
+    subtitle_temp.write_all(subtitles)?;
+    video_temp.as_file().sync_all()?;
+    subtitle_temp.as_file().sync_all()?;
+    let video_path = directory.join(format!("{stem}.mp4"));
+    let subtitle_path = directory.join(format!("{stem}.srt"));
+    video_temp
+        .persist_noclobber(&video_path)
+        .map_err(|e| e.error)?;
+    if let Err(error) = subtitle_temp.persist_noclobber(&subtitle_path) {
+        if let Err(cleanup) = std::fs::remove_file(&video_path) {
+            return Err(AppError::Invalid(format!(
+                "字幕保存失败：{}；视频已保存于 {}，清理失败：{}",
+                error.error,
+                video_path.display(),
+                cleanup
+            )));
+        }
+        return Err(AppError::Io(error.error));
+    }
+    Ok(SavedVideoFiles {
+        video_path: video_path.display().to_string(),
+        subtitle_path: subtitle_path.display().to_string(),
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn save_session_video(
     window: WebviewWindow,
     app: AppHandle,
     request: tauri::ipc::Request<'_>,
-) -> AppResult<String> {
+) -> AppResult<SavedVideoFiles> {
     main_only(&window)?;
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err(AppError::Invalid("缺少视频数据".into()));
+        return Err(AppError::Invalid("缺少视频或字幕数据".into()));
     };
-    if bytes.get(4..8) != Some(b"ftyp") {
-        return Err(AppError::Invalid("无效的 MP4 视频".into()));
-    }
+    let (video, subtitles) = video_export_parts(bytes)?;
+    let (video, subtitles) = (video.to_vec(), subtitles.to_vec());
     let header = request
         .headers()
         .get("x-vovis-title")
@@ -389,19 +452,65 @@ pub(crate) async fn save_session_video(
                 .take(60)
                 .collect()
         })
-        .unwrap_or_default();
-    let bytes = bytes.clone();
+        .filter(|title: &String| !title.trim().is_empty())
+        .unwrap_or_else(|| "Vovis".into());
+    let stem = format!("{title}-{}", uuid::Uuid::new_v4().simple());
     let directory = app.path().download_dir()?;
-    tauri::async_runtime::spawn_blocking(move || -> AppResult<String> {
-        use std::io::Write;
-        std::fs::create_dir_all(&directory)?;
-        let mut file = tempfile::NamedTempFile::new_in(&directory)?;
-        file.write_all(&bytes)?;
-        file.as_file().sync_all()?;
-        let destination = directory.join(format!("{title}-{}.mp4", uuid::Uuid::new_v4().simple()));
-        file.persist_noclobber(&destination).map_err(|e| e.error)?;
-        Ok(destination.display().to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        write_video_files(&directory, &stem, &video, &subtitles)
     })
     .await
-    .map_err(|_| AppError::Invalid("保存导出视频失败".into()))?
+    .map_err(|_| AppError::Invalid("保存导出视频与字幕失败".into()))?
+}
+
+#[cfg(test)]
+mod video_export_tests {
+    use super::*;
+
+    #[test]
+    fn parses_utf8_subtitles_and_video_without_confusing_their_boundaries() {
+        let text = "1\r\n00:00:00,000 --> 00:00:01,000\r\n讲稿\r\n";
+        let video = b"\0\0\0\x18ftypisom";
+        let mut bytes = b"VOVISV1\n".to_vec();
+        bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(text.as_bytes());
+        bytes.extend_from_slice(video);
+        assert_eq!(
+            video_export_parts(&bytes).unwrap(),
+            (video.as_slice(), text.as_bytes())
+        );
+        bytes[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(video_export_parts(&bytes).is_err());
+        assert!(video_export_parts(video).is_err());
+    }
+
+    #[test]
+    fn saves_matching_names_and_exact_utf8_subtitles() {
+        let directory = tempfile::tempdir().unwrap();
+        let result =
+            write_video_files(directory.path(), "演讲-test", b"video", "字幕".as_bytes()).unwrap();
+        assert_eq!(
+            std::path::Path::new(&result.video_path).file_stem(),
+            std::path::Path::new(&result.subtitle_path).file_stem()
+        );
+        assert_eq!(std::fs::read(&result.video_path).unwrap(), b"video");
+        assert_eq!(
+            std::fs::read_to_string(&result.subtitle_path).unwrap(),
+            "字幕"
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn rolls_back_new_video_if_subtitle_commit_fails_without_overwriting_existing_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let old = directory.path().join("export.srt");
+        std::fs::write(&old, b"old subtitles").unwrap();
+        assert!(
+            write_video_files(directory.path(), "export", b"new video", b"new subtitles").is_err()
+        );
+        assert!(!directory.path().join("export.mp4").exists());
+        assert_eq!(std::fs::read(old).unwrap(), b"old subtitles");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 }

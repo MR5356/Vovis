@@ -248,6 +248,7 @@ async function interruptedPlayback() {
   });
   const start = vi.fn();
   let clock!: FakeContext;
+  const clocks: FakeContext[] = [];
   class FakeContext extends EventTarget {
     state = "running";
     currentTime = 1;
@@ -258,7 +259,11 @@ async function interruptedPlayback() {
     constructor() {
       super();
       clock = this;
+      clocks.push(this);
     }
+    close = vi.fn(async () => {
+      this.state = "closed";
+    });
     decodeAudioData() {
       return Promise.resolve({ length: 100, duration: 1 });
     }
@@ -297,6 +302,8 @@ async function interruptedPlayback() {
     });
   return {
     clock,
+    clocks,
+    unlockSpeechAudio,
     start,
     begin,
     receive: (event: SpeechEvent) => receive(event),
@@ -352,4 +359,98 @@ it("fails a hung audio resume instead of silently showing playback forever", asy
     ),
   ).toEqual([]);
   expect(fixture.onEnd).not.toHaveBeenCalled();
+  await fixture.unlockSpeechAudio();
+  expect(fixture.clocks).toHaveLength(2);
+  const stop = fixture.begin();
+  fixture.receive({ kind: "audio", data: "AA==" });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(fixture.start).toHaveBeenCalledOnce();
+  stop();
+});
+
+it("detects a frozen running audio clock and reconnects without restarting the app", async () => {
+  const fixture = await interruptedPlayback();
+  fixture.begin();
+  fixture.receive({ kind: "audio", data: "AA==" });
+  await vi.advanceTimersByTimeAsync(3100);
+  expect(fixture.onError).toHaveBeenCalledOnce();
+  expect(fixture.onError.mock.calls[0][0]).toContain("音频设备停止响应");
+  expect(fixture.clock.close).toHaveBeenCalled();
+  await fixture.unlockSpeechAudio();
+  const stop = fixture.begin();
+  fixture.receive({ kind: "audio", data: "AA==" });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(fixture.clocks).toHaveLength(2);
+  expect(fixture.start).toHaveBeenCalledTimes(2);
+  stop();
+});
+
+it("keeps the paused sample offset after a user reconnects the audio output", async () => {
+  const fixture = await interruptedPlayback();
+  const player = fixture.begin();
+  fixture.receive({ kind: "audio", data: "AA==" });
+  await vi.advanceTimersByTimeAsync(0);
+  fixture.clock.currentTime = 1.425;
+  player.pause();
+  await fixture.unlockSpeechAudio({ fresh: true });
+  fixture.clocks[1].currentTime = 10;
+  player.resume();
+  expect(fixture.start).toHaveBeenCalledTimes(2);
+  expect(fixture.start.mock.calls[1][0]).toBe(10.025);
+  expect(fixture.start.mock.calls[1][1]).toBeCloseTo(0.4);
+  expect(transport.stream).toHaveBeenCalledOnce();
+  expect(fixture.onError).not.toHaveBeenCalled();
+  player();
+});
+
+it.each(["reject", "timeout"])(
+  "ignores an old output recovery %s after a fresh output starts",
+  async (failure) => {
+    const fixture = await interruptedPlayback();
+    let rejectOld!: (error: Error) => void;
+    fixture.clock.state = "interrupted";
+    fixture.clock.resume.mockImplementation(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectOld = reject;
+        }),
+    );
+    const player = fixture.begin();
+    fixture.receive({ kind: "audio", data: "AA==" });
+    await vi.advanceTimersByTimeAsync(0);
+    player.pause();
+    await fixture.unlockSpeechAudio({ fresh: true });
+    player.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.start).toHaveBeenCalledOnce();
+    if (failure === "reject") rejectOld(new Error("old device failed"));
+    for (let i = 0; i < 9; i++) {
+      fixture.clocks[1].currentTime += 1;
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    expect(fixture.onError).not.toHaveBeenCalled();
+    expect(fixture.clocks[1].close).not.toHaveBeenCalled();
+    expect(fixture.clocks[1].state).toBe("running");
+    player();
+  },
+);
+
+it("uses the new clock for first-playback reporting when paused before the first sample", async () => {
+  const fixture = await interruptedPlayback();
+  fixture.clock.currentTime = 80;
+  const player = fixture.begin();
+  fixture.receive({ kind: "audio", data: "AA==" });
+  await vi.advanceTimersByTimeAsync(0);
+  player.pause();
+  await fixture.unlockSpeechAudio({ fresh: true });
+  player.resume();
+  fixture.clocks[1].currentTime = 1.1;
+  await vi.advanceTimersByTimeAsync(25);
+  expect(
+    fixture.onMetrics.mock.calls.some(
+      ([metrics]) => metrics.firstPlaybackMs !== undefined,
+    ),
+  ).toBe(true);
+  expect(fixture.onError).not.toHaveBeenCalled();
+  player();
 });

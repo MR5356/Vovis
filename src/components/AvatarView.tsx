@@ -26,6 +26,7 @@ export function AvatarView({
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
   const demoRef = useRef(demo);
   demoRef.current = demo;
   useEffect(() => {
@@ -90,7 +91,7 @@ export function AvatarView({
         activeRenderer.current = undefined;
       renderer?.dispose();
     };
-  }, [id, interactive]);
+  }, [id, interactive, attempt]);
   return (
     <div
       className={`avatar-view${interactive ? " avatar-view-interactive" : ""}`}
@@ -200,9 +201,18 @@ export function AvatarView({
       )}
       {loading && <span className="avatar-message">加载形象…</span>}
       {error && (
-        <span role="alert" className="avatar-message">
-          {error}
-        </span>
+        <div role="alert" className="avatar-message">
+          <p>{error}</p>
+          {interactive && (
+            <Button
+              variant="outline"
+              className="secondary"
+              onClick={() => setAttempt((value) => value + 1)}
+            >
+              重新加载
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );

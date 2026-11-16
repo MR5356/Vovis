@@ -87,10 +87,10 @@ function run(vrm: VRM, stopSpeakingAt = Infinity, fps = 60) {
   };
 }
 
-describe("full-body presentation steps", () => {
+describe("grounded full-body presentation", () => {
   for (const version of ["0", "1"] as const)
     for (const authored of [false, true])
-      it(`plants each support foot while stepping on ${authored ? "raw" : "normalized"} VRM${version}`, () => {
+      it(`keeps both feet planted during weight shifts on ${authored ? "raw" : "normalized"} VRM${version}`, () => {
         const vrm = walkingModel(version, authored);
         const start = {
           left: point(vrm, "leftFoot"),
@@ -112,60 +112,32 @@ describe("full-body presentation steps", () => {
           }),
         );
         const { until, motion } = run(vrm);
-        until(5.1);
-        expect(point(vrm, "rightFoot").distanceTo(start.right)).toBeLessThan(
-          1e-5,
-        );
-        expect(point(vrm, "leftFoot").y - start.left.y).toBeGreaterThan(0.035);
-        expect(point(vrm, "leftFoot").x - start.left.x).toBeGreaterThan(0.05);
-        until(5.7);
-        const firstContact = point(vrm, "leftFoot");
-        expect(firstContact.y).toBeCloseTo(start.left.y, 5);
-        until(6.3);
-        expect(point(vrm, "leftFoot").distanceTo(firstContact)).toBeLessThan(
-          1e-5,
-        );
-        expect(point(vrm, "rightFoot").y - start.right.y).toBeGreaterThan(
-          0.035,
-        );
-        for (const { node, position, scale, length } of original) {
-          expect(node.position.distanceTo(position)).toBeLessThan(1e-7);
-          expect(node.scale.distanceTo(scale)).toBeLessThan(1e-7);
-          expect(
-            node
-              .getWorldPosition(new Vector3())
-              .distanceTo(node.parent!.getWorldPosition(new Vector3())),
-          ).toBeCloseTo(length, 6);
+        let moved = 0;
+        for (let second = 1; second <= 60; second++) {
+          until(second);
+          moved = Math.max(moved, vrm.scene.position.length());
+          expect(point(vrm, "rightFoot").distanceTo(start.right)).toBeLessThan(
+            1e-5,
+          );
+          expect(point(vrm, "leftFoot").distanceTo(start.left)).toBeLessThan(
+            1e-5,
+          );
+          for (const { node, position, scale, length } of original) {
+            expect(node.position.distanceTo(position)).toBeLessThan(1e-7);
+            expect(node.scale.distanceTo(scale)).toBeLessThan(1e-7);
+            expect(
+              node
+                .getWorldPosition(new Vector3())
+                .distanceTo(node.parent!.getWorldPosition(new Vector3())),
+            ).toBeCloseTo(length, 6);
+          }
         }
-        until(7);
-        const shiftedLeft = point(vrm, "leftFoot");
-        const shiftedRight = point(vrm, "rightFoot");
-        expect(
-          shiftedLeft
-            .clone()
-            .sub(start.left)
-            .distanceTo(shiftedRight.clone().sub(start.right)),
-        ).toBeLessThan(1e-5);
-        expect(shiftedLeft.y).toBeCloseTo(start.left.y, 5);
-        until(10);
-        expect(point(vrm, "leftFoot").distanceTo(shiftedLeft)).toBeLessThan(
-          1e-5,
-        );
-        expect(point(vrm, "rightFoot").distanceTo(shiftedRight)).toBeLessThan(
-          1e-5,
-        );
-        until(13);
-        expect(point(vrm, "leftFoot").distanceTo(start.left)).toBeLessThan(
-          1e-5,
-        );
-        expect(point(vrm, "rightFoot").distanceTo(start.right)).toBeLessThan(
-          1e-5,
-        );
-        expect(vrm.scene.position.length()).toBeLessThan(1e-7);
+        expect(moved).toBeGreaterThan(0.003);
+        expect(moved).toBeLessThan(0.015);
         motion.dispose();
       });
 
-  it("finishes its contacts and returns home smoothly when speech pauses mid-step", () => {
+  it("returns to the original stance smoothly when speech pauses", () => {
     const vrm = walkingModel("0");
     const rest = ["leftFoot", "rightFoot", "leftLowerLeg", "rightLowerLeg"].map(
       (name) =>
@@ -176,7 +148,7 @@ describe("full-body presentation steps", () => {
     );
     const motion = createAvatarMotion(vrm, { fullBody: true });
     let previous = vrm.scene.position.clone();
-    for (let frame = 0; frame <= 720; frame++) {
+    for (let frame = 0; frame <= 960; frame++) {
       const time = frame / 60;
       motion.update(time, time < 5.1 ? 0.45 : 0, frame ? 1 / 60 : 0);
       vrm.update(1 / 60);
@@ -190,16 +162,26 @@ describe("full-body presentation steps", () => {
     motion.dispose();
   });
 
-  it("alternates its next side and stays inside the shared camera envelope", () => {
-    const vrm = walkingModel("1");
-    const envelope = getAvatarMotionEnvelope(vrm, { fullBody: true });
-    const { until } = run(vrm);
-    until(7);
-    expect(vrm.scene.position.x).toBeGreaterThan(0.1);
-    until(23.5);
-    expect(vrm.scene.position.x).toBeLessThan(-0.1);
-    for (const axis of ["x", "y", "z"] as const)
-      expect(Math.abs(vrm.scene.position[axis])).toBeLessThan(envelope[axis]);
+  it("preserves world contacts under a translated, rotated and scaled parent", () => {
+    const vrm = walkingModel("0");
+    const parent = new Group();
+    parent.position.set(1.3, -0.4, 0.8);
+    parent.rotation.set(0.1, 0.7, -0.15);
+    parent.scale.setScalar(1.4);
+    parent.add(vrm.scene);
+    parent.updateMatrixWorld(true);
+    const contacts = [point(vrm, "leftFoot"), point(vrm, "rightFoot")];
+    const origin = vrm.scene.position.clone();
+    const { until, motion } = run(vrm);
+    for (const second of [7, 13, 25, 40]) {
+      until(second);
+      expect(point(vrm, "leftFoot").distanceTo(contacts[0])).toBeLessThan(1e-5);
+      expect(point(vrm, "rightFoot").distanceTo(contacts[1])).toBeLessThan(
+        1e-5,
+      );
+    }
+    motion.dispose();
+    expect(vrm.scene.position.equals(origin)).toBe(true);
   });
 
   it("adds only motion outside the existing mesh bounds to camera margins", () => {
@@ -211,8 +193,10 @@ describe("full-body presentation steps", () => {
     const original = bounds.clone();
     const margin = getAvatarMotionEnvelope(vrm, { fullBody: true }, bounds);
     expect(margin.y).toBeLessThan(0.08);
-    expect(margin.x).toBeGreaterThan(0.19);
-    expect(margin.x).toBeLessThan(0.25);
+    expect(margin.x).toBeGreaterThan(0.01);
+    // The curved arm return needs a slightly wider lateral margin while
+    // remaining small relative to this 1.75 m model (under 9 cm per side).
+    expect(margin.x).toBeLessThan(0.09);
     expect(bounds.equals(original)).toBe(true);
   });
 
@@ -230,7 +214,7 @@ describe("full-body presentation steps", () => {
         ).toBeLessThan(1e-5);
   });
 
-  it("keeps the shared arm gestures unchanged when walking is enabled", () => {
+  it("keeps the shared arm gestures unchanged with grounded weight shifts", () => {
     const still = walkingModel("1");
     const walking = walkingModel("1");
     const stillMotion = createAvatarMotion(still);

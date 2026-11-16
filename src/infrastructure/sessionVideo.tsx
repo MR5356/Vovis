@@ -14,10 +14,11 @@ import {
   getFirstEncodableVideoCodec,
 } from "mediabunny";
 import { loadPdfDocument, renderPdfPage } from "./pdfDocument";
-import { invoke } from "@tauri-apps/api/core";
 import { SampleSlide } from "../slides";
 import { getNarration, getPdf, type SessionRecord } from "../storage";
 import { isDesktop } from "./desktop";
+import { sessionSubtitles } from "./sessionSubtitles";
+import { saveSessionVideoFiles } from "./sessionVideoFiles";
 
 async function drawSample(
   record: SessionRecord,
@@ -51,6 +52,8 @@ export async function exportSessionVideo(
   signal: AbortSignal,
   onProgress: (value: number) => void,
 ) {
+  signal.throwIfAborted();
+  const subtitles = sessionSubtitles(record);
   const canvas = document.createElement("canvas");
   canvas.width = 1280;
   canvas.height = 720;
@@ -67,7 +70,6 @@ export async function exportSessionVideo(
   const loading = pdfFile
     ? loadPdfDocument(await pdfFile.arrayBuffer())
     : undefined;
-  const doc = await loading?.promise;
   const input = audioFile
     ? new Input({ source: new BlobSource(audioFile), formats: [MP4, MATROSKA] })
     : undefined;
@@ -79,6 +81,8 @@ export async function exportSessionVideo(
   output.addVideoTrack(video);
   let started = false;
   try {
+    const doc = await loading?.promise;
+    signal.throwIfAborted();
     const track = await input?.getPrimaryAudioTrack();
     const audioCodec = await track?.getCodec();
     if (input && (!audioCodec || !track))
@@ -95,10 +99,15 @@ export async function exportSessionVideo(
     signal.throwIfAborted();
     await output.start();
     started = true;
+    let workFailure: unknown;
+    function checkWork() {
+      signal.throwIfAborted();
+      if (workFailure) throw workFailure;
+    }
     async function writeFrames() {
       const ctx = canvas.getContext("2d")!;
       for (const [index, frame] of frames.entries()) {
-        signal.throwIfAborted();
+        checkWork();
         if (doc) {
           const page = await doc.getPage(frame.page + 1);
           const base = page.getViewport({ scale: 1 });
@@ -132,7 +141,7 @@ export async function exportSessionVideo(
       const origin = await track.getFirstTimestamp();
       let first = true;
       for await (const packet of new EncodedPacketSink(track).packets()) {
-        signal.throwIfAborted();
+        checkWork();
         const timestamp = Math.max(0, packet.timestamp - origin);
         if (timestamp >= record.duration) break;
         await sound.add(
@@ -143,32 +152,38 @@ export async function exportSessionVideo(
       }
       sound.close();
     }
-    await Promise.all([writeFrames(), writeAudio()]);
+    // Let both workers settle before cancelling the shared muxer. A failure in
+    // one worker stops the other at its next boundary, avoiding writes after cancel.
+    const workers = await Promise.allSettled(
+      [writeFrames, writeAudio].map(async (work) => {
+        try {
+          await work();
+        } catch (error) {
+          workFailure = error;
+          throw error;
+        }
+      }),
+    );
+    const failed = workers.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
     signal.throwIfAborted();
     await output.finalize();
     started = false;
     signal.throwIfAborted();
     const bytes = output.target.buffer!;
-    const name =
-      record.title
-        .replace(/[^\p{L}\p{N} _-]/gu, "_")
-        .trim()
-        .slice(0, 60) || "演讲记录";
-    if (isDesktop) {
-      return await invoke<string>("save_session_video", bytes, {
-        headers: { "x-vovis-title": encodeURIComponent(name) },
-      });
-    }
-    const url = URL.createObjectURL(new Blob([bytes], { type: "video/mp4" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = name + ".mp4";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-    return link.download;
+    const result = await saveSessionVideoFiles(
+      bytes,
+      subtitles,
+      record.title,
+      isDesktop,
+      signal,
+    );
+    onProgress(100);
+    return result;
   } finally {
     if (started) await output.cancel().catch(() => {});
     input?.dispose();
-    await loading?.destroy();
+    // Cleanup failure must not misreport files that have already been saved.
+    await loading?.destroy().catch(() => {});
   }
 }

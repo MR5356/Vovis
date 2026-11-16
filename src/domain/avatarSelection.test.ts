@@ -6,6 +6,7 @@ import {
   builtinAvatars,
   defaultAvatarSettings,
   resolveAvatarId,
+  withoutImportedAvatar,
 } from "./avatar";
 
 describe("available presenter selection", () => {
@@ -54,4 +55,41 @@ describe("available presenter selection", () => {
     expect(avatarName(id, settings)).toBe("知性讲师");
     expect(resolveAvatarId("assistant")).toBe("assistant");
   });
+});
+
+it("removes a failed selected import and preserves all other settings and imports", () => {
+  const settings = {
+    ...defaultAvatarSettings,
+    enabled: true,
+    size: 32,
+    selected: "broken",
+    imports: [
+      { id: "broken", name: "Old" },
+      { id: "keep", name: "Keep" },
+    ],
+  };
+  const next = withoutImportedAvatar(settings, "broken");
+  expect(next).toEqual({
+    ...settings,
+    selected: "assistant",
+    imports: [{ id: "keep", name: "Keep" }],
+  });
+  expect(settings.imports).toHaveLength(2);
+  expect(withoutImportedAvatar(next, "broken")).toEqual(next);
+  expect(
+    withoutImportedAvatar({ ...settings, selected: "keep" }, "broken").selected,
+  ).toBe("keep");
+});
+
+it("clears orphan selections and protects every built-in identity", () => {
+  expect(
+    withoutImportedAvatar(
+      { ...defaultAvatarSettings, selected: "orphan" },
+      "orphan",
+    ).selected,
+  ).toBe("assistant");
+  for (const { id } of builtinAvatars)
+    expect(() => withoutImportedAvatar(defaultAvatarSettings, id)).toThrow(
+      "内置形象不能删除",
+    );
 });

@@ -7,12 +7,34 @@ import { DEFAULT_LANGUAGE, type ProjectLanguage } from "../domain/language";
 import { streamSpeech, type SpeechEvent } from "./desktop";
 import { PcmStream } from "./pcmStream";
 import {
+  createSpeechRecording,
+  type SpeechRecordingOutput,
+} from "./speechRecording";
+import {
   formatSpeechError,
   SpeechGenerationError,
 } from "../domain/speechError";
 
 let context: AudioContext | undefined;
 const resuming = new WeakMap<AudioContext, Promise<void>>();
+
+class AudioOutputError extends Error {
+  constructor(
+    message: string,
+    readonly output: AudioContext,
+  ) {
+    super(message);
+  }
+}
+
+function retireAudio(clock: AudioContext) {
+  if (context === clock) context = undefined;
+  try {
+    void clock.close().catch(() => {});
+  } catch {
+    /* Already unavailable. */
+  }
+}
 
 function ensureAudioRunning(clock: AudioContext): Promise<void> {
   if (clock.state === "running") return Promise.resolve();
@@ -23,7 +45,8 @@ function ensureAudioRunning(clock: AudioContext): Promise<void> {
   try {
     resumed = clock.resume();
   } catch (error) {
-    return Promise.reject(error);
+    retireAudio(clock);
+    return Promise.reject(new AudioOutputError(String(error), clock));
   }
   let timeout: ReturnType<typeof setTimeout>;
   const task = Promise.race([
@@ -35,8 +58,10 @@ function ensureAudioRunning(clock: AudioContext): Promise<void> {
     }),
   ])
     .catch((error) => {
-      throw new Error(
-        `无法恢复音频输出，请检查系统输出设备后点击继续讲解 · ${String(error)}`,
+      retireAudio(clock);
+      throw new AudioOutputError(
+        `音频输出已中断，请点击「继续讲解」重新连接音频 · ${String(error)}`,
+        clock,
       );
     })
     .finally(() => {
@@ -48,38 +73,15 @@ function ensureAudioRunning(clock: AudioContext): Promise<void> {
 }
 
 /** Call in the start/resume gesture so WebKit can unlock audio output. */
-export function unlockSpeechAudio() {
+export function unlockSpeechAudio(options: { fresh?: boolean } = {}) {
+  if (options.fresh && context) retireAudio(context);
   if (!context || context.state === "closed") context = new AudioContext();
   return ensureAudioRunning(context);
 }
 
 export function recordNarration() {
   if (!context) throw new Error("音频尚未初始化");
-  const output = context.createMediaStreamDestination();
-  const recorder = new MediaRecorder(output.stream);
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = ({ data }) => {
-    if (data.size) chunks.push(data);
-  };
-  const result = new Promise<Blob | undefined>((resolve) => {
-    recorder.onerror = () => resolve(undefined);
-    recorder.onstop = () =>
-      resolve(
-        chunks.length
-          ? new Blob(chunks, { type: recorder.mimeType })
-          : undefined,
-      );
-  });
-  recorder.start(1000);
-  return {
-    output,
-    async stop() {
-      if (recorder.state !== "inactive") recorder.stop();
-      const blob = await result;
-      output.stream.getTracks().forEach((track) => track.stop());
-      return blob;
-    },
-  };
+  return createSpeechRecording();
 }
 
 export interface SpeechMetrics {
@@ -96,7 +98,7 @@ export interface SpeechOptions {
   text: string;
   voice: string;
   rate?: number;
-  recordingOutput?: AudioNode;
+  recordingOutput?: AudioNode | SpeechRecordingOutput;
   onAudioReady?: () => void;
   onMetrics?: (metrics: SpeechMetrics) => void;
   onProgress?: (progress: number) => void;
@@ -111,7 +113,7 @@ function decodeBase64(value: string) {
 /** One request, one playback timeline. Stopping invalidates network and queued audio together. */
 export function playSpeech(options: SpeechOptions) {
   const { connection, text, voice } = options;
-  const clock = context;
+  let clock = context;
   if (!clock) throw new Error("音频尚未初始化");
   const started = performance.now();
   const format = connection.streamEncoding ?? speechFormat(connection);
@@ -133,7 +135,7 @@ export function playSpeech(options: SpeechOptions) {
           : undefined,
       )
     : undefined;
-  const meter = createAvatarMeter(clock);
+  let meter = createAvatarMeter(clock);
   const rate = options.rate ?? 1;
   const metrics: SpeechMetrics = {};
   const nodes = new Map<
@@ -152,10 +154,36 @@ export function playSpeech(options: SpeechOptions) {
   let completed = 0;
   let cancelRequest = () => {};
   let timer: ReturnType<typeof setInterval> | undefined;
+  let lastClockTime = clock.currentTime;
+  let lastClockAdvance = performance.now();
+  let notifyOutputChange = () => {};
+  let outputChanged = new Promise<void>((resolve) => {
+    notifyOutputChange = resolve;
+  });
+  function signalOutputChange() {
+    notifyOutputChange();
+    outputChanged = new Promise<void>((resolve) => {
+      notifyOutputChange = resolve;
+    });
+  }
+
+  async function waitForOutput() {
+    while (!stopped && !paused) {
+      const target = clock!;
+      await Promise.race([
+        ensureAudioRunning(target).catch((error) => {
+          if (clock === target && !stopped && !paused) throw error;
+        }),
+        outputChanged,
+      ]);
+      if (clock === target) return;
+    }
+  }
 
   function stop() {
     if (stopped) return;
     stopped = true;
+    signalOutputChange();
     meter?.dispose();
     clock!.removeEventListener("statechange", recoverAudio);
     cancelRequest();
@@ -171,6 +199,8 @@ export function playSpeech(options: SpeechOptions) {
 
   function fail(error: unknown) {
     if (stopped) return;
+    if (error instanceof AudioOutputError && error.output !== clock) return;
+    if (error instanceof AudioOutputError) retireAudio(clock!);
     stop();
     options.onError(formatSpeechError(error));
   }
@@ -179,6 +209,18 @@ export function playSpeech(options: SpeechOptions) {
     if (stopped || paused) return;
     if (clock!.state !== "running") {
       recoverAudio();
+      return;
+    }
+    if (!nodes.size || clock!.currentTime !== lastClockTime) {
+      lastClockTime = clock!.currentTime;
+      lastClockAdvance = performance.now();
+    } else if (performance.now() - lastClockAdvance > 3000) {
+      fail(
+        new AudioOutputError(
+          "音频设备停止响应，请点击「继续讲解」重新连接音频",
+          clock!,
+        ),
+      );
       return;
     }
     if (
@@ -216,7 +258,11 @@ export function playSpeech(options: SpeechOptions) {
     node.playbackRate.value = rate;
     node.connect(clock!.destination);
     if (meter) node.connect(meter.input);
-    if (options.recordingOutput) node.connect(options.recordingOutput);
+    if (options.recordingOutput) {
+      if ("connectSource" in options.recordingOutput)
+        options.recordingOutput.connectSource(node);
+      else node.connect(options.recordingOutput);
+    }
     if (firstAt === undefined) options.onAudioReady?.();
     if (stopped) {
       node.disconnect();
@@ -247,6 +293,7 @@ export function playSpeech(options: SpeechOptions) {
     resumeGeneration++;
     if (stopped || paused) return;
     paused = true;
+    signalOutputChange();
     meter?.reset();
     const now = clock!.currentTime;
     for (const [node, { buffer, at, offset }] of nodes) {
@@ -266,13 +313,31 @@ export function playSpeech(options: SpeechOptions) {
 
   function resume() {
     if (stopped || !paused) return;
+    // A user gesture can replace a broken output without losing the paused
+    // sample position. AudioBuffers are reusable across contexts; nodes aren't.
+    if (context && context !== clock) {
+      clock!.removeEventListener("statechange", recoverAudio);
+      meter?.dispose();
+      clock = context;
+      resumeGeneration++;
+      signalOutputChange();
+      recovery = undefined;
+      meter = createAvatarMeter(clock);
+      clock.addEventListener("statechange", recoverAudio);
+      cursor = 0;
+      lastClockTime = clock.currentTime;
+      if (metrics.firstPlaybackMs === undefined) firstAt = undefined;
+    }
+    lastClockAdvance = performance.now();
     if (clock!.state !== "running") {
       const generation = ++resumeGeneration;
       void ensureAudioRunning(clock!)
         .then(() => {
           if (!stopped && paused && generation === resumeGeneration) resume();
         })
-        .catch(fail);
+        .catch((error) => {
+          if (generation === resumeGeneration) fail(error);
+        });
       return;
     }
     paused = false;
@@ -284,11 +349,15 @@ export function playSpeech(options: SpeechOptions) {
   let recovery: Promise<void> | undefined;
   function recoverAudio() {
     if (stopped || paused || clock!.state === "running" || recovery) return;
-    recovery = ensureAudioRunning(clock!)
-      .catch(fail)
+    const target = clock!;
+    const task = ensureAudioRunning(target)
+      .catch((error) => {
+        if (!paused && clock === target) fail(error);
+      })
       .finally(() => {
-        recovery = undefined;
+        if (recovery === task) recovery = undefined;
       });
+    recovery = task;
   }
   clock.addEventListener("statechange", recoverAudio);
   recoverAudio();
@@ -321,14 +390,15 @@ export function playSpeech(options: SpeechOptions) {
     decoding = decoding
       .then(async () => {
         if (stopped) return;
-        await ensureAudioRunning(clock);
+        await waitForOutput();
         if (stopped) return;
         try {
           const bytes = decodeBase64(event.data);
+          const decoder = context ?? clock!;
           if (pcm) {
             const frames = pcm.push(bytes);
             if (frames) {
-              const buffer = clock.createBuffer(
+              const buffer = decoder.createBuffer(
                 frames.channels.length,
                 frames.channels[0].length,
                 frames.sampleRate,
@@ -339,7 +409,7 @@ export function playSpeech(options: SpeechOptions) {
               schedule(buffer);
             }
           } else {
-            schedule(await clock.decodeAudioData(bytes.buffer));
+            schedule(await decoder.decodeAudioData(bytes.buffer));
           }
         } catch (error) {
           throw new Error(`音频解码失败 · ${String(error)}`);

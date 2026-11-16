@@ -135,10 +135,6 @@ function App({
   const [stage, setStage] = useState(0);
   const [modal, setModal] = useState("");
   const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
-  const [renderedPdfPage, setRenderedPdfPage] = useState<{
-    document: pdfjs.PDFDocumentProxy;
-    page: number;
-  } | null>(null);
   const [pdfRetry, setPdfRetry] = useState(0);
   const [pdfRenderFailed, setPdfRenderFailed] = useState(false);
   const pdfName = data.pdfName;
@@ -278,7 +274,6 @@ function App({
     let alive = true;
     let task: pdfjs.PDFDocumentLoadingTask | undefined;
     setPdf(null);
-    setRenderedPdfPage(null);
     setPdfRenderFailed(false);
     if (assetId) {
       void (async () => {
@@ -479,12 +474,10 @@ function App({
 
   useEffect(() => {
     if (!pdf) return;
-    // The preview is unmounted in rehearsal and while viewing project materials.
-    // Keep page readiness independent of that optional UI surface.
+    // The control-panel preview is optional and never gates spoken narration.
     const target = canvas.current ?? document.createElement("canvas");
     let cancelled = false;
     let task: pdfjs.RenderTask | undefined;
-    setRenderedPdfPage(null);
     pdf
       .getPage(page + 1)
       .then((p) => {
@@ -494,7 +487,6 @@ function App({
         return task.promise.then(() => {
           if (!cancelled) {
             setPdfRenderFailed(false);
-            setRenderedPdfPage({ document: pdf, page });
             setRenderTick((t) => t + 1);
           }
         });
@@ -615,12 +607,9 @@ function App({
       notify(message);
     },
   );
-  const narrationReady =
-    audience.ready &&
-    (!data.pdfAssetId ||
-      (!!pdf &&
-        renderedPdfPage?.document === pdf &&
-        renderedPdfPage.page === page));
+  // The optional control-panel preview may not paint while its window is
+  // occluded. Only the audience content handshake gates narration.
+  const narrationReady = audience.ready;
   const narration = usePageNarration({
     active: isDesktop && stage === 2,
     playing: playing && !activeAnswer && !qaPhase,
@@ -653,6 +642,7 @@ function App({
       else beginQuestions();
     },
     onError: (error) => {
+      log("pause", "语音输出中断");
       setNarrationError(error);
       setPlaying(false);
     },
@@ -699,6 +689,7 @@ function App({
     }
   }
   async function start() {
+    if (sessionRef.current) return;
     if (!rehearsalPassed) {
       notify("请先通过彩排检查");
       enterRehearsal();
@@ -708,7 +699,7 @@ function App({
     const requested = latestStartState.current;
     if (isDesktop) {
       try {
-        await unlockSpeechAudio();
+        await unlockSpeechAudio({ fresh: true });
       } catch (error) {
         notify(`无法启动音频输出 · ${String(error)}`);
         return;
@@ -1726,7 +1717,7 @@ function App({
                                   const session = sessionRef.current;
                                   if (!playing && isDesktop) {
                                     try {
-                                      await unlockSpeechAudio();
+                                      await unlockSpeechAudio({ fresh: true });
                                     } catch (error) {
                                       setNarrationError(String(error));
                                       return;

@@ -1,3 +1,4 @@
+use tauri::utils::config::BackgroundThrottlingPolicy;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub const MAIN_LABEL: &str = "main";
@@ -7,6 +8,9 @@ pub fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let builder = WebviewWindowBuilder::new(app, MAIN_LABEL, WebviewUrl::App("index.html".into()))
         // Let the PDF drop zone receive files through the DOM DataTransfer API.
         .disable_drag_drop_handler()
+        // Narration and page handshakes must keep running when another app is
+        // in front. Supported by WKWebView on macOS 14+; ignored elsewhere.
+        .background_throttling(BackgroundThrottlingPolicy::Disabled)
         .title("Vovis")
         .inner_size(1440.0, 940.0)
         .min_inner_size(1000.0, 680.0)
@@ -52,6 +56,7 @@ pub fn open_presentation(app: &AppHandle) -> tauri::Result<()> {
         PRESENTATION_LABEL,
         WebviewUrl::App("index.html?view=presentation".into()),
     )
+    .background_throttling(BackgroundThrottlingPolicy::Disabled)
     .title("Vovis · 演示窗口")
     .inner_size(1280.0, 720.0)
     .build()?;

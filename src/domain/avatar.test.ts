@@ -76,7 +76,7 @@ describe("avatar imports and packaged assets", () => {
     expect(() => inspectVrm(bytes)).toThrow(/不完整/);
   });
 
-  it("fits every assistant vertex over the full gesture cycle without shrinking its preview", async () => {
+  it("fits every assistant vertex over varied gesture rhythms without shrinking its preview", async () => {
     const vrm = await parseAvatar(packagedAvatar("assistant"));
     vrm.humanoid.autoUpdateHumanBones = false;
     vrm.update(0);
@@ -118,35 +118,37 @@ describe("avatar imports and packaged assets", () => {
       framed.getSize(new Vector3()).length() / 2,
     );
     expect(framedRadius).toBeLessThan(actualRadius * 1.2);
-    const motion = createAvatarMotion(vrm);
     let maximumOverflow = 0;
-    try {
-      motion.update(0, 0.45, 0);
-      for (let frame = 1; frame <= 1248; frame++) {
-        motion.update(frame / 60, 0.45, 1 / 60);
-        vrm.update(1 / 60);
-        if (frame % 12) continue;
-        vrm.scene.updateMatrixWorld(true);
-        for (const { mesh, vertices } of surfaces) {
-          mesh.skeleton.update();
-          vertices.forEach((rest, index) => {
-            mesh
-              .applyBoneTransform(index, vertex.copy(rest))
-              .applyMatrix4(mesh.matrixWorld);
-            for (const axis of ["x", "y", "z"] as const)
-              maximumOverflow = Math.max(
-                maximumOverflow,
-                framed.min[axis] - vertex[axis],
-                vertex[axis] - framed.max[axis],
-              );
-          });
+    for (const seed of [0x71c3, 1, 42]) {
+      const motion = createAvatarMotion(vrm, { seed });
+      try {
+        motion.update(0, 0.45, 0);
+        for (let frame = 1; frame <= 2400; frame++) {
+          motion.update(frame / 60, 0.45, 1 / 60);
+          vrm.update(1 / 60);
+          if (frame % 24) continue;
+          vrm.scene.updateMatrixWorld(true);
+          for (const { mesh, vertices } of surfaces) {
+            mesh.skeleton.update();
+            vertices.forEach((rest, index) => {
+              mesh
+                .applyBoneTransform(index, vertex.copy(rest))
+                .applyMatrix4(mesh.matrixWorld);
+              for (const axis of ["x", "y", "z"] as const)
+                maximumOverflow = Math.max(
+                  maximumOverflow,
+                  framed.min[axis] - vertex[axis],
+                  vertex[axis] - framed.max[axis],
+                );
+            });
+          }
         }
+        expect(maximumOverflow).toBeLessThan(1e-5);
+      } finally {
+        motion.dispose();
       }
-      expect(maximumOverflow).toBeLessThan(1e-5);
-    } finally {
-      motion.dispose();
-      disposeAvatar(vrm);
     }
+    disposeAvatar(vrm);
   }, 30_000);
 
   it.each(["assistant", "lecturer", "engineer"])(
@@ -278,12 +280,14 @@ describe("avatar imports and packaged assets", () => {
         .clone()
         .expandByVector(getAvatarMotionEnvelope(vrm, {}, restBounds));
       const motion = createAvatarMotion(vrm);
+      const handMovement = { rightHand: 0, leftHand: 0 };
+      let largestSkinMovement = 0;
       try {
         motion.update(0, 0.45, 0);
-        for (let frame = 1; frame <= 1092; frame++) {
+        for (let frame = 1; frame <= 2400; frame++) {
           motion.update(frame / 60, 0.45, 1 / 60);
           vrm.update(1 / 60);
-          if (![156, 468, 780, 1092].includes(frame)) continue;
+          if (frame % 90) continue;
           vrm.scene.updateMatrixWorld(true);
           const hips = bones.find((b) => b.name === "hips")!;
           for (const name of ["rightHand", "leftHand"] as const) {
@@ -293,22 +297,11 @@ describe("avatar imports and packaged assets", () => {
               .getWorldPosition(new Vector3())
               .sub(hips.node.getWorldPosition(new Vector3()));
             const distance = before.distanceTo(after);
-            expect(
-              distance,
-              `${name} should move relative to the body`,
-            ).toBeGreaterThan(0.025);
+            handMovement[name] = Math.max(handMovement[name], distance);
             expect(
               distance,
               `${name} should stay within a presentation gesture`,
             ).toBeLessThan(0.2);
-            if (
-              (frame === 156 && name === "rightHand") ||
-              (frame === 468 && name === "leftHand")
-            )
-              expect(
-                distance,
-                "primary explaining hand should be visibly expressive",
-              ).toBeGreaterThan(0.12);
           }
           for (const { name, node, position, scale, parentDistance } of bones) {
             expect(node.position.distanceTo(position), name).toBeLessThan(1e-7);
@@ -350,7 +343,10 @@ describe("avatar imports and packaged assets", () => {
             }
           }
           expect(Number.isFinite(maximumSkinMovement)).toBe(true);
-          expect(maximumSkinMovement).toBeGreaterThan(0.08);
+          largestSkinMovement = Math.max(
+            largestSkinMovement,
+            maximumSkinMovement,
+          );
           expect(
             framingOverflow,
             "the shared camera envelope must include the animated skin",
@@ -358,7 +354,7 @@ describe("avatar imports and packaged assets", () => {
           stretches.sort((a, b) => a - b);
           ratios.sort((a, b) => a - b);
           // These meshes have pre-existing arm/waist weight leakage. Guard its
-          // measured envelope at all four gesture peaks; this is a regression
+          // measured envelope across varied gestures and rests; this is a regression
           // bound, not a claim that their authored skin weights are perfect.
           expect(stretches[Math.floor(stretches.length * 0.99)]).toBeLessThan(
             0.007,
@@ -374,7 +370,14 @@ describe("avatar imports and packaged assets", () => {
             expect(Number.isFinite(value)).toBe(true);
         }
 
-        for (let frame = 1093; frame <= 1800; frame++) {
+        expect(
+          Math.min(handMovement.leftHand, handMovement.rightHand),
+        ).toBeGreaterThan(0.08);
+        expect(
+          Math.max(handMovement.leftHand, handMovement.rightHand),
+        ).toBeGreaterThan(0.12);
+        expect(largestSkinMovement).toBeGreaterThan(0.08);
+        for (let frame = 2401; frame <= 3120; frame++) {
           motion.update(frame / 60, 0, 1 / 60);
           vrm.update(1 / 60);
         }

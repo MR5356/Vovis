@@ -3,7 +3,7 @@ import type { VRM, VRMHumanBoneName } from "@pixiv/three-vrm";
 import type { avatarBodyFrame } from "./avatarPose";
 
 // Distances scale with the avatar's torso, not its file's unit convention.
-export const avatarWalkScale = { travel: 0.28, lift: 0.08, drop: 0.05 } as const;
+export const avatarStanceScale = { travel: 0.018, drop: 0.006 } as const;
 
 type BodyFrame = ReturnType<typeof avatarBodyFrame>;
 type Leg = {
@@ -19,8 +19,8 @@ type Leg = {
   rest: Quaternion[];
 };
 
-/** A two-step sidestep with fixed world-space contacts and two-bone leg IK. */
-export function createAvatarWalk(
+/** A small weight shift, with both feet anchored by two-bone leg IK. */
+export function createAvatarStance(
   vrm: VRM,
   bone: (name: VRMHumanBoneName) => Object3D | null,
   frame: BodyFrame,
@@ -62,15 +62,15 @@ export function createAvatarWalk(
   const originWorld = vrm.scene.getWorldPosition(new Vector3());
   // A small model with unusually short legs must still be able to reach each
   // contact without stretching. The public envelope remains an upper bound.
-  const travel = Math.min(
-    span * avatarWalkScale.travel,
-    ...legs.map((leg) => (leg.upperLength + leg.lowerLength) * 0.16),
+  let travel = Math.min(
+    span * avatarStanceScale.travel,
+    ...legs.flatMap((leg) => [
+      (leg.upperLength + leg.lowerLength) * 0.015,
+      (leg.hip.distanceTo(leg.ankle) -
+        Math.abs(leg.upperLength - leg.lowerLength)) *
+        0.25,
+    ]),
   );
-  const lift = Math.min(
-    span * avatarWalkScale.lift,
-    ...legs.map((leg) => (leg.upperLength + leg.lowerLength) * 0.06),
-  );
-  const targets = legs.map((leg) => leg.ankle.clone());
   const hip = new Vector3();
   const ankle = new Vector3();
   const axis = new Vector3();
@@ -82,18 +82,29 @@ export function createAvatarWalk(
   const rotation = new Quaternion();
   const orientation = new Quaternion();
   const parentOrientation = new Quaternion();
-  let state: "idle" | "out" | "hold" | "back" = "idle";
-  let elapsed = 0;
-  let nextDirection = 1;
-  let direction = 1;
-  let idleDelay = 4.5;
-  const strideDuration = 2.4;
-  const holdDuration = 3.5;
-  const ease = (value: number) => {
-    const t = Math.max(0, Math.min(1, value));
-    return t * t * t * (t * (t * 6 - 15) + 10);
-  };
-
+  function requiredDrop(shift: number) {
+    let drop = 0;
+    for (const leg of legs) {
+      hip.copy(leg.hip).addScaledVector(frame.left, shift);
+      ankle.copy(hip).sub(leg.ankle);
+      const vertical = ankle.dot(frame.up);
+      const lateralSquared = Math.max(0, ankle.lengthSq() - vertical ** 2);
+      const reach = leg.upperLength + leg.lowerLength - 1e-7;
+      const maximumHeight = Math.sqrt(Math.max(0, reach ** 2 - lateralSquared));
+      drop = Math.max(drop, vertical - maximumHeight);
+    }
+    return drop;
+  }
+  // Unusual leg proportions/poses must not escape the camera's shared bound.
+  // Reduce the shift instead of clamping a reachable target and sliding a foot.
+  for (let attempt = 0; attempt < 12; attempt++) {
+    if (
+      Math.max(requiredDrop(travel), requiredDrop(-travel)) <=
+      span * avatarStanceScale.drop
+    )
+      break;
+    travel *= 0.5;
+  }
   function restoreLegs() {
     for (const leg of legs)
       [leg.upper, leg.lower, leg.foot].forEach((node, i) =>
@@ -139,7 +150,7 @@ export function createAvatarWalk(
       .addScaledVector(bend, height);
     aim(leg.upper, leg.lower, desiredKnee);
     aim(leg.lower, leg.foot, target);
-    // Keep the sole's authored orientation on the floor throughout a step.
+    // Keep the sole's authored orientation on the floor throughout the shift.
     if (leg.foot.parent) leg.foot.parent.getWorldQuaternion(parentOrientation);
     else parentOrientation.identity();
     leg.foot.quaternion
@@ -150,92 +161,23 @@ export function createAvatarWalk(
   }
 
   return {
-    update(dt: number, speaking: boolean) {
-      if (!speaking && state === "hold") {
-        state = "back";
-        elapsed = 0;
-      }
-      let remaining = dt;
-      while (remaining > 0) {
-        if (state === "idle" && !speaking) {
-          elapsed = 0;
-          idleDelay = 4.5;
-          break;
-        }
-        const duration =
-          state === "idle"
-            ? idleDelay
-            : state === "hold"
-              ? holdDuration
-              : strideDuration;
-        const consumed = Math.min(remaining, duration - elapsed);
-        elapsed += consumed;
-        remaining -= consumed;
-        if (elapsed < duration - 1e-8) break;
-        elapsed = 0;
-        if (state === "idle") {
-          state = "out";
-          direction = nextDirection;
-          nextDirection *= -1;
-        } else if (state === "out") state = speaking ? "hold" : "back";
-        else if (state === "hold") state = "back";
-        else {
-          state = "idle";
-          idleDelay = 8;
-        }
-      }
-
-      if (state === "idle") {
+    update(weight: number) {
+      const shift = Math.max(-1, Math.min(1, weight)) * travel;
+      if (Math.abs(shift) < 1e-8) {
         vrm.scene.position.copy(origin);
         restoreLegs();
         return;
       }
-      const progress = state === "hold" ? 1 : elapsed / strideDuration;
-      const returning = state === "back";
-      const start = returning ? 1 : 0;
-      const end = returning ? 0 : 1;
-      const rootFraction =
-        state === "hold" ? 1 : start + (end - start) * ease(progress);
-      const movingDirection = returning ? -direction : direction;
-      const leadIndex = movingDirection > 0 ? 0 : 1;
-      let drop = 0;
-      for (let index = 0; index < legs.length; index++) {
-        const leg = legs[index];
-        const footProgress = Math.max(
-          0,
-          Math.min(1, progress * 2 - (index === leadIndex ? 0 : 1)),
-        );
-        const fraction =
-          state === "hold" ? 1 : start + (end - start) * ease(footProgress);
-        const footLift =
-          state === "hold" ? 0 : lift * Math.sin(footProgress * Math.PI) ** 2;
-        targets[index]
-          .copy(leg.ankle)
-          .addScaledVector(frame.left, direction * travel * fraction)
-          .addScaledVector(frame.up, footLift);
-        // Lower the pelvis only as far as needed to keep the support leg's
-        // endpoint reachable. This keeps each planted ankle fixed in the world.
-        hip
-          .copy(leg.hip)
-          .addScaledVector(frame.left, direction * travel * rootFraction);
-        ankle.copy(hip).sub(targets[index]);
-        const vertical = ankle.dot(frame.up);
-        const lateralSquared = Math.max(0, ankle.lengthSq() - vertical ** 2);
-        const reach = leg.upperLength + leg.lowerLength - 1e-7;
-        const maximumHeight = Math.sqrt(
-          Math.max(0, reach ** 2 - lateralSquared),
-        );
-        drop = Math.max(drop, vertical - maximumHeight);
-      }
+      // A straight support leg needs a tiny pelvis drop to stay reachable.
+      const drop = requiredDrop(shift);
       offset
         .copy(originWorld)
-        .addScaledVector(frame.left, direction * travel * rootFraction)
+        .addScaledVector(frame.left, shift)
         .addScaledVector(frame.up, -Math.max(0, drop));
       if (vrm.scene.parent) vrm.scene.parent.worldToLocal(offset);
       vrm.scene.position.copy(offset);
       vrm.scene.updateMatrixWorld(true);
-      for (let index = 0; index < legs.length; index++)
-        solve(legs[index], targets[index]);
+      for (const leg of legs) solve(leg, leg.ankle);
     },
     dispose() {
       restoreLegs();

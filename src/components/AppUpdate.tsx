@@ -14,6 +14,7 @@ import { flushWorkspace, isDesktop } from "../infrastructure/desktop";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { AppDialog } from "./AppDialog";
+import { ReleaseNotes } from "./ReleaseNotes";
 import {
   checkForUpdate,
   formatDownloadSize,
@@ -184,6 +185,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     >
       {children}
       <AppDialog
+        className="update-dialog"
         open={open}
         onOpenChange={(value) => {
           if (!installing) setOpen(value);
@@ -209,7 +211,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           {update && (
             <section className="update-release-notes">
               <h3>更新日志</h3>
-              <p>{update.body?.trim() || "此版本未提供更新日志。"}</p>
+              <ReleaseNotes source={update.body} />
             </section>
           )}
           {message && <p role="status">{message}</p>}

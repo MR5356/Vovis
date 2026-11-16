@@ -1,3 +1,8 @@
+.modal.update-dialog {
+  width: min(490px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+}
+
 .update-error {
   color: var(--destructive, #b42318);
   overflow-wrap: anywhere;
@@ -12,14 +17,8 @@
   border-radius: 10px;
 }
 
-.update-release-notes h3 {
+.update-release-notes > h3 {
   margin: 0 0 10px;
-}
-
-.update-release-notes p {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .update-download {
@@ -29,7 +28,63 @@
 }
 
 .update-download progress {
+  display: block;
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
-  height: 12px;
-  accent-color: var(--primary, #7654bb);
+  height: 8px;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--secondary);
+  color: var(--primary);
+}
+
+.update-download progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--secondary);
+}
+
+.update-download progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 0.2s ease;
+}
+
+.update-download progress::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+.update-download progress:indeterminate {
+  background: linear-gradient(
+    90deg,
+    var(--secondary) 0% 25%,
+    var(--primary) 45% 55%,
+    var(--secondary) 75% 100%
+  );
+  background-size: 200% 100%;
+  animation: update-download-pulse 1.6s ease-in-out infinite;
+}
+
+.update-download progress:indeterminate::-webkit-progress-bar {
+  background: transparent;
+}
+
+@keyframes update-download-pulse {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-download progress:indeterminate {
+    animation: none;
+  }
+  .update-download progress::-webkit-progress-value {
+    transition: none;
+  }
 }

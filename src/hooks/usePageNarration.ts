@@ -3,7 +3,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Connection } from "../domain/workspace";
 import { DEFAULT_LANGUAGE, type ProjectLanguage } from "../domain/language";
 import type { OfflineNarrationSource } from "../infrastructure/preparedNarration";
-import type { SpeechMetrics } from "../infrastructure/speechPlayer";
+import type {
+  SpeechMetrics,
+  SpeechOptions,
+} from "../infrastructure/speechPlayer";
 import { createNarrationBuffer } from "../infrastructure/narrationBuffer";
 import {
   createPageNarration,
@@ -23,7 +26,7 @@ interface NarrationOptions {
   nextPageText: string;
   rehearsalText: string;
   voice: string;
-  recordingOutput?: AudioNode;
+  recordingOutput?: SpeechOptions["recordingOutput"];
   onPlayback: () => void;
   onProgress: (progress: number) => void;
   onEnd: () => void;

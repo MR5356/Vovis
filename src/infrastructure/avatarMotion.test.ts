@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { Bone, Group } from "three";
-import type { VRM, VRMHumanBoneName } from "@pixiv/three-vrm";
-import { createAvatarMotion } from "./avatarMotion";
+import { Bone, Box3, Group, Object3D, Vector3 } from "three";
+import {
+  VRMExpression,
+  VRMExpressionManager,
+  type VRM,
+  type VRMHumanBoneName,
+} from "@pixiv/three-vrm";
+import { createAvatarMotion, getAvatarMotionEnvelope } from "./avatarMotion";
 
 function model(posed = true, fullBody = false) {
   const scene = new Group();
@@ -68,6 +73,34 @@ function simulate(
 }
 
 describe("presenter body motion", () => {
+  it("ignores distant hand helpers while retaining mapped fingers in the camera margin", () => {
+    const { vrm, raw } = model(false);
+    const bounds = new Box3(
+      new Vector3(-0.3, 0, -0.2),
+      new Vector3(0.3, 1.8, 0.2),
+    );
+    const before = getAvatarMotionEnvelope(vrm, {}, bounds);
+    for (const side of ["left", "right"] as const) {
+      // Both Object3D helpers and unmapped bones occur in imported VRMs.
+      // Their names and visibility flags are not a reliable discriminator.
+      for (const helper of [new Object3D(), new Bone()]) {
+        helper.position.set(8, -3, 5);
+        raw.get(`${side}Hand`)!.add(helper);
+      }
+    }
+    expect(getAvatarMotionEnvelope(vrm, {}, bounds).distanceTo(before)).toBe(0);
+    const finger = new Bone();
+    finger.position.set(0.4, 0, 0);
+    raw.get("leftHand")!.add(finger);
+    raw.set("leftIndexDistal", finger);
+    const withFinger = getAvatarMotionEnvelope(vrm, {}, bounds);
+    expect(withFinger.length()).toBeGreaterThan(before.length());
+    finger.position.multiplyScalar(2);
+    expect(getAvatarMotionEnvelope(vrm, {}, bounds).length()).toBeGreaterThan(
+      withFinger.length(),
+    );
+  });
+
   it("uses identical gesture transforms for equivalent authored and imported rigs", () => {
     const authored = model(true);
     const imported = model(false);
@@ -78,8 +111,7 @@ describe("presenter body motion", () => {
     motions.forEach((motion) => motion.update(0, 0.45, 0));
     for (let frame = 1; frame <= 1092; frame++) {
       motions.forEach((motion) => motion.update(frame / 60, 0.45, 1 / 60));
-      // Check gesture peaks: right-hand explanation, left emphasis, then both
-      // hands. None may change according to the asset's origin.
+      // Equivalent anatomy must receive the same gesture regardless of origin.
       if (![156, 468, 780, 1092].includes(frame)) continue;
       for (const [name, node] of authored.bones)
         expect(
@@ -92,7 +124,7 @@ describe("presenter body motion", () => {
     }
   });
 
-  it("uses the same upper-body motion on half/full-body rigs and leaves walking opt-in", () => {
+  it("uses the same upper-body motion on half/full-body rigs and leaves leg adjustment opt-in", () => {
     const half = model(false);
     const full = model(false, true);
     simulate(createAvatarMotion(half.vrm), 7.8, 60, () => 0.45);
@@ -113,31 +145,35 @@ describe("presenter body motion", () => {
     ).toBeLessThan(1e-7);
   });
 
-  it("uses distinct visible explanation, emphasis, open-hand and offering gestures", () => {
+  it("varies explaining hands and lets them rest during continuous speech", () => {
     const { vrm, bones, rests } = model();
     const motion = createAvatarMotion(vrm);
-    const peaks = [156, 468, 780, 1092];
-    const recorded: { right: number; left: number }[] = [];
+    let rightLead = false;
+    let leftLead = false;
+    let openHands = false;
+    let rested = false;
     motion.update(0, 0.45, 0);
-    for (let frame = 1; frame <= 1092; frame++) {
+    for (let frame = 1; frame <= 3600; frame++) {
       motion.update(frame / 60, 0.45, 1 / 60);
-      if (!peaks.includes(frame)) continue;
-      recorded.push({
-        right: bones
-          .get("rightLowerArm")!
-          .quaternion.angleTo(rests.get("rightLowerArm")!),
-        left: bones
-          .get("leftLowerArm")!
-          .quaternion.angleTo(rests.get("leftLowerArm")!),
-      });
+      const right = bones
+        .get("rightLowerArm")!
+        .quaternion.angleTo(rests.get("rightLowerArm")!);
+      const left = bones
+        .get("leftLowerArm")!
+        .quaternion.angleTo(rests.get("leftLowerArm")!);
+      rightLead ||= right > 0.25 && right > left * 3;
+      leftLead ||= left > 0.25 && left > right * 3;
+      openHands ||=
+        Math.min(right, left) > 0.19 && Math.abs(right - left) < 0.01;
+      rested ||= frame > 300 && Math.max(right, left) < 0.01;
+      expect(Math.max(right, left)).toBeLessThan(0.43);
     }
-    expect(recorded[0].right).toBeGreaterThan(0.3);
-    expect(recorded[1].left).toBeGreaterThan(0.35);
-    expect(recorded[0].right / recorded[0].left).toBeGreaterThan(3);
-    expect(recorded[1].left / recorded[1].right).toBeGreaterThan(3);
-    expect(Math.abs(recorded[2].left - recorded[2].right)).toBeLessThan(0.01);
-    expect(recorded[3].right / recorded[3].left).toBeGreaterThan(1.5);
-    expect(recorded[3].right / recorded[3].left).toBeLessThan(2.5);
+    expect({ rightLead, leftLead, openHands, rested }).toEqual({
+      rightLead: true,
+      leftLead: true,
+      openHands: true,
+      rested: true,
+    });
   });
 
   for (const posed of [true, false]) {
@@ -167,7 +203,7 @@ describe("presenter body motion", () => {
     const syllables = model();
     simulate(createAvatarMotion(continuous.vrm), 4, 60, () => 0.45);
     simulate(createAvatarMotion(syllables.vrm), 4, 60, (t) =>
-      t % 0.3 < 0.09 ? 0.45 : 0,
+      t % 0.3 < 0.09 ? (t % 0.6 < 0.3 ? 0.08 : 0.95) : 0,
     );
     for (const name of [
       "rightUpperArm",
@@ -220,4 +256,45 @@ describe("presenter body motion", () => {
     expect(() => simulate(motion, 8, 60, () => 0.4)).not.toThrow();
     motion.dispose();
   });
+
+  it.each([true, false])(
+    "animates available blink presets and restores gaze ownership (combined=%s)",
+    (combined) => {
+      const { vrm } = model();
+      const expressions = new VRMExpressionManager();
+      const names = combined ? ["blink"] : ["blinkLeft", "blinkRight"];
+      for (const name of names) {
+        expressions.registerExpression(new VRMExpression(name));
+        expressions.setValue(name, 0.15);
+      }
+      const gaze = {
+        yaw: 2,
+        pitch: -1,
+        autoUpdate: true,
+        target: new Group(),
+        update() {},
+      };
+      Object.assign(vrm, { expressionManager: expressions, lookAt: gaze });
+      const motion = createAvatarMotion(vrm);
+      let closed = false;
+      let lookedAside = false;
+      for (let frame = 0; frame < 1800; frame++) {
+        motion.update(frame / 60, 0, frame ? 1 / 60 : 0);
+        closed ||= names.every((name) => expressions.getValue(name)! > 0.8);
+        lookedAside ||= Math.abs(gaze.yaw - 2) > 0.8;
+        expect(gaze.autoUpdate).toBe(false);
+      }
+      expect(closed).toBe(true);
+      expect(lookedAside).toBe(true);
+      motion.dispose();
+      expect(gaze.yaw).toBe(2);
+      expect(gaze.pitch).toBe(-1);
+      expect(gaze.autoUpdate).toBe(true);
+      for (const name of names) expect(expressions.getValue(name)).toBe(0.15);
+      motion.dispose();
+      motion.update(40, 0.5, 0.1);
+      expect(gaze.yaw).toBe(2);
+      for (const name of names) expect(expressions.getValue(name)).toBe(0.15);
+    },
+  );
 });
